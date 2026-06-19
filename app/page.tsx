@@ -2,12 +2,27 @@
 
 import { useEffect, useState } from "react";
 import type { DashboardState } from "@/lib/stats";
-import { formatDuration, formatPace, formatRelative, formatClock } from "@/lib/format";
+import { formatDuration, formatPace, formatDistance, formatRelative, formatClock, type Unit } from "@/lib/format";
 
 export default function Dashboard() {
   const [state, setState] = useState<DashboardState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [, setTick] = useState(0);
+  const [unit, setUnit] = useState<Unit>("mi");
+
+  // Load the viewer's saved unit preference (mi/km) on mount.
+  useEffect(() => {
+    const saved = localStorage.getItem("endure24_unit");
+    if (saved === "mi" || saved === "km") setUnit(saved);
+  }, []);
+
+  const toggleUnit = () => {
+    setUnit((u) => {
+      const next = u === "mi" ? "km" : "mi";
+      localStorage.setItem("endure24_unit", next);
+      return next;
+    });
+  };
 
   // Poll the server every 15s; tick locally every second for live countdowns.
   useEffect(() => {
@@ -58,9 +73,12 @@ export default function Dashboard() {
           <h1 className="text-2xl font-bold tracking-tight">{state.teamName}</h1>
           <p className="text-sm text-slate-400">{state.eventName}</p>
         </div>
-        <a href="/admin" className="text-xs text-slate-500 hover:text-slate-300 underline">
-          admin
-        </a>
+        <div className="flex items-center gap-3">
+          <UnitToggle unit={unit} onToggle={toggleUnit} />
+          <a href="/admin" className="text-xs text-slate-500 hover:text-slate-300 underline">
+            admin
+          </a>
+        </div>
       </header>
 
       {/* Countdown banner */}
@@ -68,7 +86,7 @@ export default function Dashboard() {
         {!state.started ? (
           <p className="text-amber-300">Starts {formatClock(state.startAt)} · {formatRelative(state.startAt, nowIso)}</p>
         ) : state.finished ? (
-          <p className="text-emerald-300 font-semibold">🏁 Event complete — {state.totalLaps} laps, {state.totalMiles} mi</p>
+          <p className="text-emerald-300 font-semibold">🏁 Event complete — {state.totalLaps} laps, {formatDistance(state.totalMiles, unit)}</p>
         ) : (
           <p className="text-lg">
             <span className="text-slate-400 text-sm">Time remaining</span>{" "}
@@ -118,7 +136,7 @@ export default function Dashboard() {
       {/* Team stats */}
       <section className="mt-5 grid grid-cols-2 sm:grid-cols-3 gap-3">
         <Card label="Total laps" value={String(state.totalLaps)} />
-        <Card label="Total miles" value={String(state.totalMiles)} />
+        <Card label={`Total ${unit === "km" ? "km" : "miles"}`} value={formatDistance(state.totalMiles, unit, false)} />
         <Card label="Projected laps" value={String(state.projectedTotalLaps)} hint="at 24h" />
         <Card label="Avg lap" value={formatDuration(state.teamAvgLapSeconds)} />
         <Card
@@ -126,7 +144,7 @@ export default function Dashboard() {
           value={state.fastestLap ? formatDuration(state.fastestLap.seconds) : "–"}
           hint={state.fastestLap?.runnerName}
         />
-        <Card label="Lap distance" value={`${state.lapDistanceMiles} mi`} />
+        <Card label="Lap distance" value={formatDistance(state.lapDistanceMiles, unit)} />
       </section>
 
       {/* Per-runner breakdown */}
@@ -138,7 +156,7 @@ export default function Dashboard() {
               <tr className="text-left">
                 <th className="px-3 py-2">Runner</th>
                 <th className="px-3 py-2 text-right">Laps</th>
-                <th className="px-3 py-2 text-right">Miles</th>
+                <th className="px-3 py-2 text-right">{unit === "km" ? "Km" : "Miles"}</th>
                 <th className="px-3 py-2 text-right">Avg lap</th>
                 <th className="px-3 py-2 text-right">Pace</th>
               </tr>
@@ -154,9 +172,9 @@ export default function Dashboard() {
                       {!r.authorized && <span className="ml-1 text-[10px] text-amber-400">⚠</span>}
                     </td>
                     <td className="px-3 py-2 text-right font-mono">{r.lapCount}</td>
-                    <td className="px-3 py-2 text-right font-mono">{r.totalMiles}</td>
+                    <td className="px-3 py-2 text-right font-mono">{formatDistance(r.totalMiles, unit, false)}</td>
                     <td className="px-3 py-2 text-right font-mono">{formatDuration(r.avgLapSeconds)}</td>
-                    <td className="px-3 py-2 text-right font-mono">{formatPace(r.avgPaceSecPerMile)}</td>
+                    <td className="px-3 py-2 text-right font-mono">{formatPace(r.avgPaceSecPerMile, unit)}</td>
                   </tr>
                 ))}
             </tbody>
@@ -176,7 +194,7 @@ export default function Dashboard() {
                 {l.source === "manual" && <span className="ml-1 text-[10px] text-slate-500">(manual)</span>}
               </span>
               <span className="text-slate-400 font-mono">
-                {l.miles} mi · {formatDuration(l.movingSeconds)} · {formatClock(l.startedAt)}
+                {formatDistance(l.miles, unit)} · {formatDuration(l.movingSeconds)} · {formatClock(l.startedAt)}
               </span>
             </div>
           ))}
@@ -203,6 +221,27 @@ function Card({ label, value, hint }: { label: string; value: string; hint?: str
       <p className="text-xl font-bold font-mono">{value}</p>
       {hint && <p className="text-xs text-slate-500 truncate">{hint}</p>}
     </div>
+  );
+}
+
+function UnitToggle({ unit, onToggle }: { unit: Unit; onToggle: () => void }) {
+  return (
+    <button
+      onClick={onToggle}
+      aria-label="Toggle distance units"
+      className="flex items-center rounded-full bg-slate-800 ring-1 ring-slate-700 p-0.5 text-xs font-medium"
+    >
+      {(["mi", "km"] as Unit[]).map((u) => (
+        <span
+          key={u}
+          className={`px-2.5 py-1 rounded-full transition-colors ${
+            unit === u ? "bg-orange-600 text-white" : "text-slate-400"
+          }`}
+        >
+          {u}
+        </span>
+      ))}
+    </button>
   );
 }
 
