@@ -25,6 +25,21 @@ export interface RunnerStat {
   collectiveSecondsFasterPerLap: number | null;
 }
 
+export interface ScheduleEntry {
+  fromLap: number; // first team-wide lap number this entry covers
+  laps: number; // how many laps (a completed double = 2)
+  runnerName: string;
+  atISO: string; // start time (actual for done, projected for forecast)
+  seconds: number; // elapsed (actual) or expected (forecast) duration
+  miles: number;
+  status: "done" | "running" | "forecast";
+}
+
+export interface ChartPoint {
+  t: string;
+  miles: number;
+}
+
 export interface DashboardState {
   eventName: string;
   teamName: string;
@@ -63,6 +78,15 @@ export interface DashboardState {
     startedAt: string;
     source: string;
   }[];
+  schedule: ScheduleEntry[];
+  initialProjectedLaps: number;
+  chart: {
+    startAt: string;
+    endAt: string;
+    actual: ChartPoint[];
+    projected: ChartPoint[];
+    initial: ChartPoint[];
+  };
 }
 
 /** Builds the complete, JSON-serializable dashboard state. */
@@ -132,6 +156,7 @@ export async function getDashboardState(): Promise<DashboardState> {
 
   const nextStartAt = new Map<string, Date>();
   const futureLapsByRunner = new Map<string, number>();
+  const forecastLaps: { runnerId: string; startMs: number; durMs: number; inProgress: boolean }[] = [];
   let estimatedFinishAt: Date | null = null;
   let futureFitLaps = 0; // future laps (incl. the in-progress one) that start before cutoff
   let marginalLapStartMs: number | null = null; // start time of the first lap that does NOT fit
@@ -146,6 +171,8 @@ export async function getDashboardState(): Promise<DashboardState> {
         if (t > now.getTime() && !nextStartAt.has(runner.id)) nextStartAt.set(runner.id, new Date(t));
         futureFitLaps++;
         futureLapsByRunner.set(runner.id, (futureLapsByRunner.get(runner.id) ?? 0) + 1);
+        // k===0 is the lap currently underway (or about to start at event open).
+        forecastLaps.push({ runnerId: runner.id, startMs: t, durMs: dur, inProgress: k === 0 && started });
         t += dur;
       } else {
         marginalLapStartMs = t;
@@ -238,6 +265,73 @@ export async function getDashboardState(): Promise<DashboardState> {
       source: l.source,
     }));
 
+  // --- Full lap schedule: completed (actual) + forecast (estimated) ---
+  const nameById = new Map(runners.map((r) => [r.id, r.name]));
+  const schedule: ScheduleEntry[] = [];
+  let lapCounter = 0;
+  for (const l of allLaps) {
+    schedule.push({
+      fromLap: lapCounter + 1,
+      laps: l.laps,
+      runnerName: l.runner.name,
+      atISO: l.startedAt.toISOString(),
+      seconds: l.elapsedTimeSec,
+      miles: round1(l.distanceMeters / METERS_PER_MILE),
+      status: "done",
+    });
+    lapCounter += l.laps;
+  }
+  for (const f of forecastLaps) {
+    schedule.push({
+      fromLap: lapCounter + 1,
+      laps: 1,
+      runnerName: nameById.get(f.runnerId) ?? "?",
+      atISO: new Date(f.startMs).toISOString(),
+      seconds: Math.round(f.durMs / 1000),
+      miles: lapDist,
+      status: f.inProgress ? "running" : "forecast",
+    });
+    lapCounter += 1;
+  }
+
+  // --- Initial plan: projection from the start using only estimates/default ---
+  // (ignores actuals & team average) so the chart can show drift from the plan.
+  let initialProjectedLaps = 0;
+  if (n > 0) {
+    let t = startAt.getTime();
+    for (let k = 0; k < 1000 && t < cutoff; k++) {
+      const r = runners[k % n];
+      initialProjectedLaps++;
+      t += (r.estimatedLapSeconds ?? defaultLapSeconds) * 1000;
+    }
+  }
+
+  // --- Chart series (cumulative miles over time) ---
+  const actual: { t: string; miles: number }[] = [{ t: startAt.toISOString(), miles: 0 }];
+  {
+    const byFinish = [...allLaps].sort(
+      (a, b) => a.startedAt.getTime() + a.elapsedTimeSec * 1000 - (b.startedAt.getTime() + b.elapsedTimeSec * 1000)
+    );
+    let cum = 0;
+    for (const l of byFinish) {
+      cum += l.distanceMeters / METERS_PER_MILE;
+      actual.push({ t: new Date(l.startedAt.getTime() + l.elapsedTimeSec * 1000).toISOString(), miles: round1(cum) });
+    }
+  }
+  // Projection continues from the last actual point through the forecast laps.
+  const projected: { t: string; miles: number }[] = [actual[actual.length - 1]];
+  {
+    let cum = projected[0].miles;
+    for (const f of forecastLaps) {
+      cum += lapDist;
+      projected.push({ t: new Date(f.startMs + f.durMs).toISOString(), miles: round1(cum) });
+    }
+  }
+  const initial = [
+    { t: startAt.toISOString(), miles: 0 },
+    { t: endAt.toISOString(), miles: round1(initialProjectedLaps * lapDist) },
+  ];
+
   return {
     eventName: config.eventName,
     teamName: config.teamName,
@@ -262,6 +356,9 @@ export async function getDashboardState(): Promise<DashboardState> {
     onCourseSince: onCourseSince?.toISOString() ?? null,
     runners: runnerStats,
     recentLaps,
+    schedule,
+    initialProjectedLaps,
+    chart: { startAt: startAt.toISOString(), endAt: endAt.toISOString(), actual, projected, initial },
   };
 }
 
