@@ -129,8 +129,20 @@ export default function NotifyToggle() {
 
   if (status === "loading") return null;
 
+  // Once set up, collapse to a tiny one-line status.
+  if (status === "on") {
+    return (
+      <p className="mt-6 text-center text-xs text-slate-500">
+        🔔 Notifications on{" "}
+        <button onClick={disable} className="underline hover:text-slate-300">
+          turn off
+        </button>
+      </p>
+    );
+  }
+
   return (
-    <section className="mt-4 rounded-xl bg-slate-800/40 ring-1 ring-slate-700/60 px-4 py-3">
+    <section className="mt-6 rounded-xl bg-slate-800/40 ring-1 ring-slate-700/60 px-4 py-3">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-sm">🔔 Get a heads-up ~15 min before you&apos;re up</span>
       </div>
@@ -145,7 +157,7 @@ export default function NotifyToggle() {
         </p>
       )}
 
-      {(status === "off" || status === "on" || status === "working") && (
+      {(status === "off" || status === "working") && (
         <div className="mt-2 flex items-center gap-2 flex-wrap">
           <select
             value={me}
@@ -160,22 +172,13 @@ export default function NotifyToggle() {
             ))}
           </select>
 
-          {status === "on" ? (
-            <>
-              <span className="text-xs text-emerald-400">✓ on for this device</span>
-              <button onClick={disable} className="text-xs text-slate-400 underline">
-                turn off
-              </button>
-            </>
-          ) : (
-            <button
-              onClick={enable}
-              disabled={status === "working"}
-              className="rounded-lg bg-orange-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
-            >
-              {status === "working" ? "Enabling…" : "Enable"}
-            </button>
-          )}
+          <button
+            onClick={enable}
+            disabled={status === "working"}
+            className="rounded-lg bg-orange-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {status === "working" ? "Enabling…" : "Enable"}
+          </button>
         </div>
       )}
 

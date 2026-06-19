@@ -30,8 +30,6 @@ export default function Dashboard() {
     <main className="mx-auto max-w-3xl px-4 py-6">
       <Nav teamName={state.teamName} eventName={state.eventName} active="dashboard" unit={unit} onToggleUnit={toggleUnit} />
 
-      <NotifyToggle />
-
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         {/* On course now */}
         <section className="rounded-2xl bg-gradient-to-br from-orange-600/30 to-rose-600/20 ring-1 ring-orange-500/30 p-5">
@@ -91,6 +89,8 @@ export default function Dashboard() {
         See the full lap schedule on <a href="/laps" className="underline hover:text-slate-300">Laps</a> · totals &amp; charts on{" "}
         <a href="/stats" className="underline hover:text-slate-300">Stats</a>.
       </p>
+
+      <NotifyToggle />
     </main>
   );
 }
