@@ -159,28 +159,31 @@ export default function Dashboard() {
           <p className="text-sm text-slate-300">
             Projected <b>{state.projectedTotalLaps}</b> laps. To squeeze in <b>one more</b>, the team needs to claw back{" "}
             <b className="text-orange-200">{formatDuration(state.extraLapGainSeconds)}</b> before the last-lap cutoff at{" "}
-            {formatClock(state.endAt)}.
+            {formatClock(state.endAt)}
+            {state.extraLapSpeedupPct != null && (
+              <>
+                {" "}— that&apos;s everyone digging in about{" "}
+                <b className="text-orange-200">{state.extraLapSpeedupPct}% faster</b> per lap.
+              </>
+            )}
           </p>
           {(() => {
-            const helpers = state.runners
-              .filter((r) => r.secondsFasterForExtraLap != null)
-              .sort((a, b) => a.secondsFasterForExtraLap! - b.secondsFasterForExtraLap!);
-            if (helpers.length === 0)
-              return (
-                <p className="text-xs text-slate-400 mt-2">No single runner can make that up alone — it’ll take a team effort.</p>
-              );
+            const helpers = state.runners.filter((r) => r.collectiveSecondsFasterPerLap != null);
+            if (helpers.length === 0) return null;
             return (
               <>
                 <p className="text-xs text-slate-400 mt-3 mb-1">
-                  …or if just one runner picks it up, how much faster they’d need to average per lap:
+                  Each runner&apos;s share of the effort (faster per lap, on average):
                 </p>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {helpers.map((r) => (
                     <div key={r.id} className="rounded-lg bg-black/20 px-3 py-2 text-sm">
                       <span className="font-medium">{r.name}</span>
-                      <span className="block font-mono text-orange-200">{formatDuration(r.secondsFasterForExtraLap!)}/lap</span>
+                      <span className="block font-mono text-orange-200">
+                        {formatDuration(r.collectiveSecondsFasterPerLap!)}/lap faster
+                      </span>
                       <span className="block text-[11px] text-slate-500">
-                        ≈ {formatDuration(r.secondsFasterForExtraLap! / milesToUnit(state.lapDistanceMiles, unit))}/{unit} quicker
+                        ≈ {formatDuration(r.collectiveSecondsFasterPerLap! / milesToUnit(state.lapDistanceMiles, unit))}/{unit} quicker
                       </span>
                     </div>
                   ))}

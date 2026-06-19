@@ -20,8 +20,9 @@ export interface RunnerStat {
   nextStartAt: string | null;
   // For the on-course runner: ISO time they're expected to finish.
   estimatedFinishAt: string | null;
-  // If only this runner sped up, seconds/lap faster needed to fit one more team lap.
-  secondsFasterForExtraLap: number | null;
+  // This runner's share of a collective team effort to fit one more lap:
+  // seconds/lap faster they'd need to average. null if they have no laps left.
+  collectiveSecondsFasterPerLap: number | null;
 }
 
 export interface DashboardState {
@@ -42,6 +43,8 @@ export interface DashboardState {
   projectedTotalLaps: number;
   // Total team time (seconds) that must be saved to fit one more lap; null if N/A.
   extraLapGainSeconds: number | null;
+  // Equal-% speed-up every remaining lap needs for the team to fit one more lap.
+  extraLapSpeedupPct: number | null;
   teamAvgLapSeconds: number | null;
   fastestLap: { runnerName: string; seconds: number } | null;
 
@@ -160,6 +163,15 @@ export async function getDashboardState(): Promise<DashboardState> {
   const extraLapGainSeconds =
     marginalLapStartMs != null ? Math.max(0, Math.round((marginalLapStartMs - cutoff) / 1000)) : null;
 
+  // Collective effort: shrink every remaining lap by the same fraction so the
+  // saved time sums to the gap. p = gap / (total time the remaining laps occupy).
+  let extraLapSpeedupFraction: number | null = null;
+  if (marginalLapStartMs != null && simStart) {
+    const remainingLapTime = marginalLapStartMs - simStart.getTime();
+    const gapMs = marginalLapStartMs - cutoff;
+    if (remainingLapTime > 0 && gapMs > 0) extraLapSpeedupFraction = gapMs / remainingLapTime;
+  }
+
   const runnerStats: RunnerStat[] = runners.map((r) => {
     const laps = r.laps;
     const lapCount = laps.length;
@@ -169,15 +181,13 @@ export async function getDashboardState(): Promise<DashboardState> {
     const onCourse = r.id === currentRunnerId;
     const { sec: expectedSec, basis } = expectedInfo(r);
 
-    // If ONLY this runner sped up, how much faster per lap would they need to be
-    // to claw back the gap, spread across the laps they're projected to run?
+    // This runner's share of the collective effort: the same % speed-up applied
+    // to their own pace. Faster runners shave fewer seconds, slower runners more.
     const futureLaps = futureLapsByRunner.get(r.id) ?? 0;
-    let secondsFasterForExtraLap: number | null = null;
-    if (extraLapGainSeconds != null && extraLapGainSeconds > 0 && futureLaps > 0) {
-      const perLap = extraLapGainSeconds / futureLaps;
-      // Only meaningful if they could realistically still complete the lap.
-      secondsFasterForExtraLap = perLap < expectedSec ? Math.round(perLap) : null;
-    }
+    const collectiveSecondsFasterPerLap =
+      extraLapSpeedupFraction != null && futureLaps > 0
+        ? Math.round(extraLapSpeedupFraction * expectedSec)
+        : null;
 
     return {
       id: r.id,
@@ -196,7 +206,7 @@ export async function getDashboardState(): Promise<DashboardState> {
       onCourse,
       nextStartAt: onCourse ? null : nextStartAt.get(r.id)?.toISOString() ?? null,
       estimatedFinishAt: onCourse ? estimatedFinishAt?.toISOString() ?? null : null,
-      secondsFasterForExtraLap,
+      collectiveSecondsFasterPerLap,
     };
   });
 
@@ -236,6 +246,7 @@ export async function getDashboardState(): Promise<DashboardState> {
     totalMiles,
     projectedTotalLaps,
     extraLapGainSeconds,
+    extraLapSpeedupPct: extraLapSpeedupFraction != null ? Math.round(extraLapSpeedupFraction * 1000) / 10 : null,
     teamAvgLapSeconds: teamAvgLapSeconds ? Math.round(teamAvgLapSeconds) : null,
     fastestLap,
     currentRunnerId: currentRunnerId ?? null,
