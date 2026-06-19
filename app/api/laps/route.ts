@@ -1,0 +1,53 @@
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { isAdmin } from "@/lib/auth";
+import { getEventConfig, METERS_PER_MILE } from "@/lib/config";
+
+export const dynamic = "force-dynamic";
+
+/**
+ * Manually record a lap (admin) — backup for when a runner's watch dies or
+ * Strava upload fails. Body: { runnerId, minutes, seconds?, miles?, startedAt? }
+ */
+export async function POST(req: NextRequest) {
+  const body = await req.json().catch(() => ({}));
+  if (!isAdmin(req, body.password)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!body.runnerId) return NextResponse.json({ error: "runnerId required" }, { status: 400 });
+
+  const config = await getEventConfig();
+  const seconds = Number(body.minutes ?? 0) * 60 + Number(body.seconds ?? 0);
+  if (!seconds) return NextResponse.json({ error: "lap time required" }, { status: 400 });
+
+  const miles = body.miles != null ? Number(body.miles) : config.lapDistanceMiles;
+  const startedAt = body.startedAt ? new Date(body.startedAt) : new Date(Date.now() - seconds * 1000);
+
+  const lap = await prisma.lap.create({
+    data: {
+      runnerId: body.runnerId,
+      distanceMeters: miles * METERS_PER_MILE,
+      movingTimeSec: seconds,
+      elapsedTimeSec: seconds,
+      startedAt,
+      source: "manual",
+    },
+  });
+
+  // Auto-advance the rotation if this runner was the on-course override.
+  if (config.currentRunnerId === body.runnerId) {
+    await prisma.eventConfig.update({
+      where: { id: 1 },
+      data: { currentRunnerId: null, onCourseSince: null },
+    });
+  }
+
+  return NextResponse.json({ id: lap.id });
+}
+
+// Delete a lap (admin) — to fix a mistaken/duplicate entry.
+export async function DELETE(req: NextRequest) {
+  const body = await req.json().catch(() => ({}));
+  if (!isAdmin(req, body.password)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!body.id) return NextResponse.json({ error: "id required" }, { status: 400 });
+  await prisma.lap.delete({ where: { id: body.id } });
+  return NextResponse.json({ ok: true });
+}

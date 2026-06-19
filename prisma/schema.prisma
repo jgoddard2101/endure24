@@ -1,0 +1,64 @@
+// Endure24 — 24h running relay tracker
+// Local dev uses SQLite. For production on Vercel, change provider to
+// "postgresql" and point DATABASE_URL at a Neon/Supabase DB (see README).
+
+generator client {
+  provider      = "prisma-client-js"
+  // "native" for local dev; "rhel-openssl-3.0.x" for Vercel's serverless runtime.
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Single-row table (id = 1) holding event-wide settings + live overrides.
+model EventConfig {
+  id               Int       @id @default(1)
+  eventName        String    @default("Endure24")
+  teamName         String    @default("Team Name")
+  startAt          DateTime
+  durationHours    Int       @default(24)
+  lapDistanceMiles Float     @default(5)
+
+  // Manual override of who is currently on course (null = infer from rotation).
+  currentRunnerId  String?
+  // When the current runner started their lap (used for ETA of the next runner).
+  onCourseSince    DateTime?
+
+  updatedAt        DateTime  @updatedAt
+}
+
+model Runner {
+  id               String    @id @default(cuid())
+  name             String
+  // Strava athlete id + OAuth tokens (populated after the runner authorizes).
+  stravaAthleteId  BigInt?   @unique
+  accessToken      String?
+  refreshToken     String?
+  tokenExpiresAt   DateTime?
+  // Position in the rotation queue (lower runs sooner). Editable.
+  rotationPosition Int
+  active           Boolean   @default(true)
+  createdAt        DateTime  @default(now())
+
+  laps             Lap[]
+}
+
+model Lap {
+  id               String    @id @default(cuid())
+  runner           Runner    @relation(fields: [runnerId], references: [id], onDelete: Cascade)
+  runnerId         String
+  // Strava activity id (null for manually-added laps). Prevents double-counting.
+  stravaActivityId BigInt?   @unique
+  distanceMeters   Float
+  movingTimeSec    Int
+  elapsedTimeSec   Int
+  startedAt        DateTime
+  source           String    @default("strava") // "strava" | "manual"
+  createdAt        DateTime  @default(now())
+
+  @@index([runnerId])
+  @@index([startedAt])
+}

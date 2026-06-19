@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "Bash(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/)",
+      "Bash(echo \"root: $\\(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/\\)\")",
+      "Bash(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/admin)",
+      "Bash(echo \"admin: $\\(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/admin\\)\")",
+      "Bash(curl -s http://localhost:3000/api/runners)",
+      "Bash(npm audit *)",
+      "Bash(npx prisma *)",
+      "PowerShell(Get-CimInstance *)",
+      "Bash(git --version)",
+      "Bash(echo \"git: $\\(git --version || echo MISSING\\)\")",
+      "Bash(gh --version)",
+      "Bash(echo \"gh: $\\(gh --version)",
+      "Bash(git init *)",
+      "Bash(git add *)",
+      "Bash(git -c user.name=Jacob -c user.email=j.goddard2101@gmail.com commit -q -m ' *)"
+    ]
+  }
+}
