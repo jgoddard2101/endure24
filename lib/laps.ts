@@ -5,6 +5,25 @@ import type { StravaActivity } from "./strava";
 // Foot activities we count as a lap.
 const LAP_TYPES = new Set(["Run", "TrailRun", "Walk", "Hike"]);
 
+// How far the lap ratio (distance / lapDistance) may sit from a whole number
+// and still count. 0.4 means a 5-mile lap is accepted between ~3 and ~7 miles,
+// a double between ~8 and ~12, etc.
+const MAX_LAP_DEVIATION = 0.4;
+
+/**
+ * How many laps an activity of `miles` represents, or null if it doesn't map
+ * cleanly to a whole number of laps. Handles double/triple laps recorded as a
+ * single Strava activity, allowing for GPS drift and short-or-long courses.
+ */
+export function lapsForDistance(miles: number, lapDistanceMiles: number): number | null {
+  if (lapDistanceMiles <= 0) return null;
+  const ratio = miles / lapDistanceMiles;
+  const n = Math.round(ratio);
+  if (n < 1) return null; // too short — warm-up, jog to the start, etc.
+  if (Math.abs(ratio - n) > MAX_LAP_DEVIATION) return null; // ambiguous distance
+  return n;
+}
+
 export interface IngestResult {
   status: "created" | "duplicate" | "rejected";
   reason?: string;
@@ -26,9 +45,9 @@ export async function ingestActivity(runnerId: string, activity: StravaActivity)
 
   const miles = activity.distance / METERS_PER_MILE;
   const lapDist = config.lapDistanceMiles;
-  // Accept 70%–140% of the lap distance to tolerate GPS drift / short-or-long courses.
-  if (miles < lapDist * 0.7 || miles > lapDist * 1.4) {
-    return { status: "rejected", reason: `distance ${miles.toFixed(2)}mi` };
+  const laps = lapsForDistance(miles, lapDist);
+  if (laps == null) {
+    return { status: "rejected", reason: `distance ${miles.toFixed(2)}mi (~${(miles / lapDist).toFixed(2)} laps)` };
   }
 
   const startedAt = new Date(activity.start_date);
@@ -50,6 +69,7 @@ export async function ingestActivity(runnerId: string, activity: StravaActivity)
       distanceMeters: activity.distance,
       movingTimeSec: activity.moving_time,
       elapsedTimeSec: activity.elapsed_time,
+      laps,
       startedAt,
       source: "strava",
     },

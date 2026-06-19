@@ -18,7 +18,10 @@ export async function POST(req: NextRequest) {
   const seconds = Number(body.minutes ?? 0) * 60 + Number(body.seconds ?? 0);
   if (!seconds) return NextResponse.json({ error: "lap time required" }, { status: 400 });
 
-  const miles = body.miles != null ? Number(body.miles) : config.lapDistanceMiles;
+  // Number of laps this entry represents (e.g. a manually-logged double lap).
+  const laps = Math.max(1, Math.round(Number(body.laps ?? 1)));
+  // Distance defaults to laps × the configured lap distance.
+  const miles = body.miles != null ? Number(body.miles) : config.lapDistanceMiles * laps;
   const startedAt = body.startedAt ? new Date(body.startedAt) : new Date(Date.now() - seconds * 1000);
 
   const lap = await prisma.lap.create({
@@ -27,6 +30,7 @@ export async function POST(req: NextRequest) {
       distanceMeters: miles * METERS_PER_MILE,
       movingTimeSec: seconds,
       elapsedTimeSec: seconds,
+      laps,
       startedAt,
       source: "manual",
     },

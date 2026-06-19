@@ -251,6 +251,11 @@ export default function Dashboard() {
             <div key={l.id} className="flex items-center justify-between rounded-lg bg-slate-800/30 px-3 py-2 text-sm">
               <span>
                 {l.runnerName}
+                {l.laps > 1 && (
+                  <span className="ml-1 rounded bg-orange-600/30 px-1.5 text-[10px] font-semibold text-orange-200">
+                    ×{l.laps}
+                  </span>
+                )}
                 {l.source === "manual" && <span className="ml-1 text-[10px] text-slate-500">(manual)</span>}
               </span>
               <span className="text-slate-400 font-mono">

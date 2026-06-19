@@ -74,6 +74,9 @@ model Lap {
   distanceMeters   Float
   movingTimeSec    Int
   elapsedTimeSec   Int
+  // How many laps this single activity represents (e.g. a double lap = 2),
+  // inferred from distance. Totals/averages weight by this.
+  laps             Int       @default(1)
   startedAt        DateTime
   source           String    @default("strava") // "strava" | "manual"
   createdAt        DateTime  @default(now())

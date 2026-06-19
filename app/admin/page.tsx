@@ -35,6 +35,7 @@ export default function Admin() {
   const [lapRunner, setLapRunner] = useState("");
   const [lapMin, setLapMin] = useState("");
   const [lapSec, setLapSec] = useState("");
+  const [lapCount, setLapCount] = useState("1");
 
   useEffect(() => {
     setPassword(localStorage.getItem("endure24_pw") ?? "");
@@ -93,9 +94,10 @@ export default function Admin() {
 
   const addLap = async () => {
     if (!lapRunner) return setMsg("❌ pick a runner");
-    if (await call("/api/laps", "POST", { runnerId: lapRunner, minutes: lapMin, seconds: lapSec })) {
+    if (await call("/api/laps", "POST", { runnerId: lapRunner, minutes: lapMin, seconds: lapSec, laps: lapCount })) {
       setLapMin("");
       setLapSec("");
+      setLapCount("1");
     }
   };
 
@@ -192,7 +194,10 @@ export default function Admin() {
       </Section>
 
       <Section title="Add a lap manually">
-        <p className="text-xs text-slate-500">Backup for dead watches / failed uploads. Distance defaults to the lap distance.</p>
+        <p className="text-xs text-slate-500">
+          Backup for dead watches / failed uploads. Set <span className="text-slate-300">laps</span> to 2+ for a double lap;
+          distance defaults to laps × the lap distance.
+        </p>
         <div className="flex flex-wrap gap-2 items-center">
           <select value={lapRunner} onChange={(e) => setLapRunner(e.target.value)} className="input">
             <option value="">Select runner…</option>
@@ -202,6 +207,7 @@ export default function Admin() {
           </select>
           <input value={lapMin} onChange={(e) => setLapMin(e.target.value)} placeholder="min" className="input w-20" inputMode="numeric" />
           <input value={lapSec} onChange={(e) => setLapSec(e.target.value)} placeholder="sec" className="input w-20" inputMode="numeric" />
+          <input value={lapCount} onChange={(e) => setLapCount(e.target.value)} placeholder="laps" title="number of laps" className="input w-16" inputMode="numeric" />
           <button onClick={addLap} className="btn">Record lap</button>
         </div>
       </Section>

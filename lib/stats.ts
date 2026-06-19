@@ -57,16 +57,12 @@ export interface DashboardState {
     id: string;
     runnerName: string;
     miles: number;
+    laps: number;
     movingSeconds: number;
     elapsedSeconds: number;
     startedAt: string;
     source: string;
   }[];
-}
-
-function avg(nums: number[]): number | null {
-  if (nums.length === 0) return null;
-  return nums.reduce((a, b) => a + b, 0) / nums.length;
 }
 
 /** Builds the complete, JSON-serializable dashboard state. */
@@ -88,14 +84,18 @@ export async function getDashboardState(): Promise<DashboardState> {
   const lapDist = config.lapDistanceMiles;
   const defaultLapSeconds = lapDist * DEFAULT_PACE_SEC_PER_MILE;
 
-  // Team average lap duration (elapsed) across all completed laps.
-  const teamAvgLapSeconds = avg(allLaps.map((l) => l.elapsedTimeSec));
+  // Team average lap duration (elapsed), weighted by lap count so a double lap
+  // (one activity, laps=2) correctly counts as two laps' worth.
+  const totalLapCount = allLaps.reduce((a, l) => a + l.laps, 0);
+  const teamAvgLapSeconds =
+    totalLapCount > 0 ? allLaps.reduce((a, l) => a + l.elapsedTimeSec, 0) / totalLapCount : null;
 
   // Expected lap duration for a runner, and where that number comes from:
   //   actual average  ->  manual estimate  ->  team average  ->  default pace.
   type Basis = "actual" | "estimate" | "team" | "default";
   const expectedInfo = (r: (typeof runners)[number]): { sec: number; basis: Basis } => {
-    const own = avg(r.laps.map((l) => l.elapsedTimeSec));
+    const ownLaps = r.laps.reduce((a, l) => a + l.laps, 0);
+    const own = ownLaps > 0 ? r.laps.reduce((a, l) => a + l.elapsedTimeSec, 0) / ownLaps : null;
     if (own != null) return { sec: own, basis: "actual" };
     if (r.estimatedLapSeconds != null) return { sec: r.estimatedLapSeconds, basis: "estimate" };
     if (teamAvgLapSeconds != null) return { sec: teamAvgLapSeconds, basis: "team" };
@@ -154,7 +154,7 @@ export async function getDashboardState(): Promise<DashboardState> {
     }
   }
 
-  const totalLaps = allLaps.length;
+  const totalLaps = totalLapCount;
   const totalMiles = round1(allLaps.reduce((a, l) => a + l.distanceMeters, 0) / METERS_PER_MILE);
   const projectedTotalLaps = totalLaps + futureFitLaps;
 
@@ -174,10 +174,15 @@ export async function getDashboardState(): Promise<DashboardState> {
 
   const runnerStats: RunnerStat[] = runners.map((r) => {
     const laps = r.laps;
-    const lapCount = laps.length;
-    const avgLap = avg(laps.map((l) => l.elapsedTimeSec));
-    const fastest = lapCount ? Math.min(...laps.map((l) => l.elapsedTimeSec)) : null;
-    const avgMoving = avg(laps.map((l) => l.movingTimeSec));
+    const lapCount = laps.reduce((a, l) => a + l.laps, 0); // doubles count as 2, etc.
+    const totalElapsed = laps.reduce((a, l) => a + l.elapsedTimeSec, 0);
+    const totalMoving = laps.reduce((a, l) => a + l.movingTimeSec, 0);
+    const totalMilesRun = laps.reduce((a, l) => a + l.distanceMeters, 0) / METERS_PER_MILE;
+    const avgLap = lapCount > 0 ? totalElapsed / lapCount : null; // per single lap
+    // Fastest lap only counts activities that were exactly one lap.
+    const singleLapTimes = laps.filter((l) => l.laps === 1).map((l) => l.elapsedTimeSec);
+    const fastest = singleLapTimes.length ? Math.min(...singleLapTimes) : null;
+    const avgPace = totalMilesRun > 0 ? totalMoving / totalMilesRun : null; // sec per mile
     const onCourse = r.id === currentRunnerId;
     const { sec: expectedSec, basis } = expectedInfo(r);
 
@@ -196,10 +201,10 @@ export async function getDashboardState(): Promise<DashboardState> {
       authorized: Boolean(r.refreshToken),
       lapCount,
       projectedLaps: lapCount + futureLaps,
-      totalMiles: round1(laps.reduce((a, l) => a + l.distanceMeters, 0) / METERS_PER_MILE),
+      totalMiles: round1(totalMilesRun),
       avgLapSeconds: avgLap ? Math.round(avgLap) : null,
       fastestLapSeconds: fastest,
-      avgPaceSecPerMile: avgMoving ? Math.round(avgMoving / lapDist) : null,
+      avgPaceSecPerMile: avgPace ? Math.round(avgPace) : null,
       estimatedLapSeconds: r.estimatedLapSeconds ?? null,
       expectedLapSeconds: Math.round(expectedSec),
       expectedBasis: basis,
@@ -210,8 +215,10 @@ export async function getDashboardState(): Promise<DashboardState> {
     };
   });
 
+  // Fastest single lap (multi-lap activities don't have a single-lap time).
   let fastestLap: DashboardState["fastestLap"] = null;
   for (const l of allLaps) {
+    if (l.laps !== 1) continue;
     if (!fastestLap || l.elapsedTimeSec < fastestLap.seconds) {
       fastestLap = { runnerName: l.runner.name, seconds: l.elapsedTimeSec };
     }
@@ -224,6 +231,7 @@ export async function getDashboardState(): Promise<DashboardState> {
       id: l.id,
       runnerName: l.runner.name,
       miles: round1(l.distanceMeters / METERS_PER_MILE),
+      laps: l.laps,
       movingSeconds: l.movingTimeSec,
       elapsedSeconds: l.elapsedTimeSec,
       startedAt: l.startedAt.toISOString(),
