@@ -7,6 +7,7 @@ export interface RunnerStat {
   rotationPosition: number;
   authorized: boolean;
   lapCount: number;
+  projectedLaps: number; // completed + projected remaining laps for this runner
   totalMiles: number;
   avgLapSeconds: number | null; // elapsed time per lap
   fastestLapSeconds: number | null;
@@ -184,6 +185,7 @@ export async function getDashboardState(): Promise<DashboardState> {
       rotationPosition: r.rotationPosition,
       authorized: Boolean(r.refreshToken),
       lapCount,
+      projectedLaps: lapCount + futureLaps,
       totalMiles: round1(laps.reduce((a, l) => a + l.distanceMeters, 0) / METERS_PER_MILE),
       avgLapSeconds: avgLap ? Math.round(avgLap) : null,
       fastestLapSeconds: fastest,

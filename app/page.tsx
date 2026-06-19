@@ -200,6 +200,7 @@ export default function Dashboard() {
               <tr className="text-left">
                 <th className="px-3 py-2">Runner</th>
                 <th className="px-3 py-2 text-right">Laps</th>
+                <th className="px-3 py-2 text-right">On track</th>
                 <th className="px-3 py-2 text-right">{unit === "km" ? "Km" : "Miles"}</th>
                 <th className="px-3 py-2 text-right">Avg lap</th>
                 <th className="px-3 py-2 text-right">Pace</th>
@@ -216,6 +217,7 @@ export default function Dashboard() {
                       {!r.authorized && <span className="ml-1 text-[10px] text-amber-400">⚠</span>}
                     </td>
                     <td className="px-3 py-2 text-right font-mono">{r.lapCount}</td>
+                    <td className="px-3 py-2 text-right font-mono text-emerald-300">{r.projectedLaps}</td>
                     <td className="px-3 py-2 text-right font-mono">{formatDistance(r.totalMiles, unit, false)}</td>
                     <td className="px-3 py-2 text-right font-mono">
                       {r.avgLapSeconds != null ? (
