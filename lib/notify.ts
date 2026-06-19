@@ -1,5 +1,5 @@
 import { prisma } from "./prisma";
-import { getDashboardState } from "./stats";
+import { getDashboardState, type DashboardState } from "./stats";
 import { sendToRunner } from "./push";
 
 // Notify a runner this many minutes before their projected next start.
@@ -13,13 +13,18 @@ export interface NotifyResult {
   devices: number;
 }
 
-/**
- * Check every runner's projected next start and push "you're up soon" to those
- * crossing the lead-time threshold. Idempotent across frequent calls via an
- * atomic per-runner cooldown claim, so it's safe to run on a 1-minute cron.
- */
+/** Convenience wrapper that recomputes state then notifies (used by the cron). */
 export async function runNotifyCheck(): Promise<NotifyResult[]> {
-  const state = await getDashboardState();
+  return notifyDueRunners(await getDashboardState());
+}
+
+/**
+ * Given a dashboard state, push "you're up soon" to runners crossing the
+ * lead-time threshold. Idempotent across frequent/concurrent calls via an
+ * atomic per-runner cooldown claim — safe to call from a cron AND from the
+ * dashboard's state poll.
+ */
+export async function notifyDueRunners(state: DashboardState): Promise<NotifyResult[]> {
   if (!state.started || state.finished) return [];
 
   const now = Date.now();
