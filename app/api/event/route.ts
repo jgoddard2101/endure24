@@ -5,6 +5,18 @@ import { getEventConfig } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 
+// Current event settings (used to prefill the admin form).
+export async function GET() {
+  const c = await getEventConfig();
+  return NextResponse.json({
+    eventName: c.eventName,
+    teamName: c.teamName,
+    startAt: c.startAt.toISOString(),
+    durationHours: c.durationHours,
+    lapDistanceMiles: c.lapDistanceMiles,
+  });
+}
+
 // Update event settings (admin): name, team, start time, duration, lap distance.
 export async function PATCH(req: NextRequest) {
   const body = await req.json().catch(() => ({}));

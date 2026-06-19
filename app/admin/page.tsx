@@ -25,6 +25,21 @@ function fmtLapTime(sec: number | null): string {
   return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
 }
 
+// ISO (UTC) -> value for a <input type="datetime-local"> in the viewer's local time.
+function isoToLocalInput(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+interface EventCfg {
+  eventName: string;
+  teamName: string;
+  startAtLocal: string; // datetime-local value
+  durationHours: number;
+  lapDistanceMiles: number;
+}
+
 export default function Admin() {
   const [password, setPassword] = useState("");
   const [runners, setRunners] = useState<RosterRunner[]>([]);
@@ -37,6 +52,9 @@ export default function Admin() {
   const [lapSec, setLapSec] = useState("");
   const [lapCount, setLapCount] = useState("1");
 
+  // Event settings form
+  const [ev, setEv] = useState<EventCfg | null>(null);
+
   useEffect(() => {
     setPassword(localStorage.getItem("endure24_pw") ?? "");
   }, []);
@@ -46,9 +64,21 @@ export default function Admin() {
     setRunners(await res.json());
   }, []);
 
+  const loadEvent = useCallback(async () => {
+    const c = await fetch("/api/event", { cache: "no-store" }).then((r) => r.json());
+    setEv({
+      eventName: c.eventName,
+      teamName: c.teamName,
+      startAtLocal: isoToLocalInput(c.startAt),
+      durationHours: c.durationHours,
+      lapDistanceMiles: c.lapDistanceMiles,
+    });
+  }, []);
+
   useEffect(() => {
     loadRunners();
-  }, [loadRunners]);
+    loadEvent();
+  }, [loadRunners, loadEvent]);
 
   const savePw = (pw: string) => {
     setPassword(pw);
@@ -107,6 +137,30 @@ export default function Admin() {
     if (await call("/api/runners", "PATCH", { id, estimatedLapSeconds: parsed })) loadRunners();
   };
 
+  const saveEvent = async () => {
+    if (!ev) return;
+    await call("/api/event", "PATCH", {
+      eventName: ev.eventName,
+      teamName: ev.teamName,
+      startAt: new Date(ev.startAtLocal).toISOString(),
+      durationHours: Number(ev.durationHours),
+      lapDistanceMiles: Number(ev.lapDistanceMiles),
+    });
+  };
+
+  const setStartNow = async () => {
+    if (await call("/api/event", "PATCH", { startAt: new Date().toISOString() })) loadEvent();
+  };
+
+  const resetData = async () => {
+    if (!confirm("Delete ALL laps and clear the on-course override? Runners and Strava links are kept.")) return;
+    const ok = await call("/api/admin/reset", "POST", {});
+    if (ok) {
+      loadRunners();
+      loadEvent();
+    }
+  };
+
   return (
     <main className="mx-auto max-w-2xl px-4 py-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -126,6 +180,60 @@ export default function Admin() {
       </Section>
 
       {msg && <p className="text-sm">{msg}</p>}
+
+      <Section title="Event settings">
+        {ev ? (
+          <>
+            <p className="text-xs text-slate-500">
+              Live values (the <code>EVENT_*</code> env vars were only initial defaults). To test the Strava fetch, hit
+              “Set start = now”; you can also drop the lap distance so a short test run counts as a lap.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="text-xs text-slate-400">
+                Event name
+                <input className="input w-full mt-1" value={ev.eventName} onChange={(e) => setEv({ ...ev, eventName: e.target.value })} />
+              </label>
+              <label className="text-xs text-slate-400">
+                Team name
+                <input className="input w-full mt-1" value={ev.teamName} onChange={(e) => setEv({ ...ev, teamName: e.target.value })} />
+              </label>
+              <label className="text-xs text-slate-400 col-span-2">
+                Start time
+                <input
+                  type="datetime-local"
+                  className="input w-full mt-1"
+                  value={ev.startAtLocal}
+                  onChange={(e) => setEv({ ...ev, startAtLocal: e.target.value })}
+                />
+              </label>
+              <label className="text-xs text-slate-400">
+                Duration (hours)
+                <input
+                  className="input w-full mt-1"
+                  inputMode="numeric"
+                  value={ev.durationHours}
+                  onChange={(e) => setEv({ ...ev, durationHours: Number(e.target.value) })}
+                />
+              </label>
+              <label className="text-xs text-slate-400">
+                Lap distance (miles)
+                <input
+                  className="input w-full mt-1"
+                  inputMode="decimal"
+                  value={ev.lapDistanceMiles}
+                  onChange={(e) => setEv({ ...ev, lapDistanceMiles: Number(e.target.value) })}
+                />
+              </label>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <button onClick={saveEvent} className="btn">Save settings</button>
+              <button onClick={setStartNow} className="btn-ghost">Set start = now</button>
+            </div>
+          </>
+        ) : (
+          <p className="text-xs text-slate-500">Loading…</p>
+        )}
+      </Section>
 
       <Section title="On course now">
         <p className="text-xs text-slate-500">
@@ -230,10 +338,19 @@ export default function Admin() {
         </div>
       </Section>
 
+      <Section title="Reset / clear test data">
+        <p className="text-xs text-slate-500">
+          Deletes <b>all laps</b> and clears the on-course override (runners, Strava links and notification sign-ups are
+          kept). Use this to wipe test laps before the real event — then set the start time back to the event date above.
+        </p>
+        <button onClick={resetData} className="btn-danger">Clear all laps</button>
+      </Section>
+
       <style>{`
         .input { background:#1e293b; border:1px solid #334155; border-radius:8px; padding:8px 10px; color:#e8edf5; font-size:14px; }
         .btn { background:#ea580c; color:white; border-radius:8px; padding:8px 14px; font-size:14px; font-weight:600; }
         .btn-ghost { background:#334155; color:#e8edf5; border-radius:8px; padding:8px 14px; font-size:14px; }
+        .btn-danger { background:#b91c1c; color:white; border-radius:8px; padding:8px 14px; font-size:14px; font-weight:600; }
         .btn-icon { background:#334155; border-radius:6px; width:32px; height:32px; font-size:14px; }
       `}</style>
     </main>
