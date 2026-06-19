@@ -27,7 +27,9 @@ export default function Nav({
     <header className="mb-4">
       <div className="flex items-baseline justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">{teamName}</h1>
+          <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-r from-sky-300 via-fuchsia-300 to-amber-300 bg-clip-text text-transparent">
+            {teamName}
+          </h1>
           <p className="text-sm text-slate-400">{eventName}</p>
         </div>
         <div className="flex items-center gap-3">
@@ -37,13 +39,15 @@ export default function Nav({
           </a>
         </div>
       </div>
-      <nav className="mt-3 flex gap-1 rounded-xl bg-slate-800/50 p-1 text-sm">
+      <nav className="mt-3 flex gap-1 rounded-xl bg-slate-900/40 backdrop-blur ring-1 ring-white/10 p-1 text-sm">
         {LINKS.map((l) => (
           <a
             key={l.page}
             href={l.href}
             className={`flex-1 text-center rounded-lg px-3 py-1.5 font-medium transition-colors ${
-              active === l.page ? "bg-orange-600 text-white" : "text-slate-300 hover:bg-slate-700/50"
+              active === l.page
+                ? "bg-gradient-to-r from-fuchsia-600 to-orange-500 text-white shadow-lg shadow-fuchsia-900/30"
+                : "text-slate-300 hover:bg-white/5"
             }`}
           >
             {l.label}
