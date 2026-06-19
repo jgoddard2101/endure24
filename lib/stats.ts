@@ -162,20 +162,31 @@ export async function getDashboardState(): Promise<DashboardState> {
   let marginalLapStartMs: number | null = null; // start time of the first lap that does NOT fit
 
   if (n > 0 && currentIdx !== -1 && simStart) {
+    const nowMs = now.getTime();
     let t = simStart.getTime();
     for (let k = 0; k < 1000; k++) {
       const runner = runners[(currentIdx + k) % n];
       const dur = expectedInfo(runner).sec * 1000;
-      if (k === 0) estimatedFinishAt = new Date(t + dur);
-      if (t < cutoff) {
-        if (t > now.getTime() && !nextStartAt.has(runner.id)) nextStartAt.set(runner.id, new Date(t));
+      const lapStart = t;
+      let lapEnd = lapStart + dur;
+      // The current runner (k===0) is already out and can't finish in the past:
+      // if they're overdue, clamp their projected finish to "now". This anchors
+      // the whole downstream timeline to the present, so the rotation order is
+      // preserved no matter how long the current runner takes — the next runner
+      // stays next instead of the queue marching on without any real laps.
+      if (k === 0) {
+        lapEnd = Math.max(lapEnd, nowMs);
+        estimatedFinishAt = new Date(lapEnd);
+      }
+      if (lapStart < cutoff) {
+        // Future laps (k>=1) always start at >= now thanks to the clamp above.
+        if (lapStart >= nowMs && !nextStartAt.has(runner.id)) nextStartAt.set(runner.id, new Date(lapStart));
         futureFitLaps++;
         futureLapsByRunner.set(runner.id, (futureLapsByRunner.get(runner.id) ?? 0) + 1);
-        // k===0 is the lap currently underway (or about to start at event open).
-        forecastLaps.push({ runnerId: runner.id, startMs: t, durMs: dur, inProgress: k === 0 && started });
-        t += dur;
+        forecastLaps.push({ runnerId: runner.id, startMs: lapStart, durMs: lapEnd - lapStart, inProgress: k === 0 && started });
+        t = lapEnd;
       } else {
-        marginalLapStartMs = t;
+        marginalLapStartMs = lapStart;
         break;
       }
     }
