@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { DashboardState } from "@/lib/stats";
-import { formatDuration, formatPace, formatDistance, formatRelative, formatClock, type Unit } from "@/lib/format";
+import { formatDuration, formatPace, formatDistance, formatRelative, formatClock, milesToUnit, type Unit } from "@/lib/format";
 
 export default function Dashboard() {
   const [state, setState] = useState<DashboardState | null>(null);
@@ -88,10 +88,15 @@ export default function Dashboard() {
         ) : state.finished ? (
           <p className="text-emerald-300 font-semibold">🏁 Event complete — {state.totalLaps} laps, {formatDistance(state.totalMiles, unit)}</p>
         ) : (
-          <p className="text-lg">
-            <span className="text-slate-400 text-sm">Time remaining</span>{" "}
-            <span className="font-mono font-bold text-emerald-300">{formatDuration(remaining)}</span>
-          </p>
+          <>
+            <p className="text-lg">
+              <span className="text-slate-400 text-sm">Time to start last lap</span>{" "}
+              <span className="font-mono font-bold text-emerald-300">{formatDuration(remaining)}</span>
+            </p>
+            <p className="text-xs text-slate-500 mt-1">
+              New laps can start until {formatClock(state.endAt)} · in-progress laps must finish by {formatClock(state.finishBy)}
+            </p>
+          </>
         )}
       </div>
 
@@ -147,6 +152,45 @@ export default function Dashboard() {
         <Card label="Lap distance" value={formatDistance(state.lapDistanceMiles, unit)} />
       </section>
 
+      {/* Push for one more lap */}
+      {state.extraLapGainSeconds != null && state.extraLapGainSeconds > 0 && (
+        <section className="mt-5 rounded-xl ring-1 ring-orange-500/30 bg-orange-600/10 p-4">
+          <h2 className="text-sm font-semibold text-orange-300 mb-1">🎯 Push for one more lap</h2>
+          <p className="text-sm text-slate-300">
+            Projected <b>{state.projectedTotalLaps}</b> laps. To squeeze in <b>one more</b>, the team needs to claw back{" "}
+            <b className="text-orange-200">{formatDuration(state.extraLapGainSeconds)}</b> before the last-lap cutoff at{" "}
+            {formatClock(state.endAt)}.
+          </p>
+          {(() => {
+            const helpers = state.runners
+              .filter((r) => r.secondsFasterForExtraLap != null)
+              .sort((a, b) => a.secondsFasterForExtraLap! - b.secondsFasterForExtraLap!);
+            if (helpers.length === 0)
+              return (
+                <p className="text-xs text-slate-400 mt-2">No single runner can make that up alone — it’ll take a team effort.</p>
+              );
+            return (
+              <>
+                <p className="text-xs text-slate-400 mt-3 mb-1">
+                  …or if just one runner picks it up, how much faster they’d need to average per lap:
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {helpers.map((r) => (
+                    <div key={r.id} className="rounded-lg bg-black/20 px-3 py-2 text-sm">
+                      <span className="font-medium">{r.name}</span>
+                      <span className="block font-mono text-orange-200">{formatDuration(r.secondsFasterForExtraLap!)}/lap</span>
+                      <span className="block text-[11px] text-slate-500">
+                        ≈ {formatDuration(r.secondsFasterForExtraLap! / milesToUnit(state.lapDistanceMiles, unit))}/{unit} quicker
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            );
+          })()}
+        </section>
+      )}
+
       {/* Per-runner breakdown */}
       <section className="mt-5">
         <h2 className="text-sm font-semibold text-slate-400 mb-2">Runners</h2>
@@ -173,7 +217,15 @@ export default function Dashboard() {
                     </td>
                     <td className="px-3 py-2 text-right font-mono">{r.lapCount}</td>
                     <td className="px-3 py-2 text-right font-mono">{formatDistance(r.totalMiles, unit, false)}</td>
-                    <td className="px-3 py-2 text-right font-mono">{formatDuration(r.avgLapSeconds)}</td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {r.avgLapSeconds != null ? (
+                        formatDuration(r.avgLapSeconds)
+                      ) : r.expectedBasis === "estimate" ? (
+                        <span className="text-slate-500">{formatDuration(r.expectedLapSeconds)} <span className="text-[10px]">est</span></span>
+                      ) : (
+                        "–"
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-right font-mono">{formatPace(r.avgPaceSecPerMile, unit)}</td>
                   </tr>
                 ))}

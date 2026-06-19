@@ -14,6 +14,7 @@ export async function GET() {
       rotationPosition: r.rotationPosition,
       authorized: Boolean(r.refreshToken),
       active: r.active,
+      estimatedLapSeconds: r.estimatedLapSeconds ?? null,
     }))
   );
 }
@@ -37,9 +38,14 @@ export async function PATCH(req: NextRequest) {
   if (!isAdmin(req, body.password)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (!body.id) return NextResponse.json({ error: "id required" }, { status: 400 });
 
-  const data: { name?: string; active?: boolean } = {};
+  const data: { name?: string; active?: boolean; estimatedLapSeconds?: number | null } = {};
   if (typeof body.name === "string") data.name = body.name;
   if (typeof body.active === "boolean") data.active = body.active;
+  // estimatedLapSeconds: number to set, null to clear.
+  if ("estimatedLapSeconds" in body) {
+    data.estimatedLapSeconds =
+      body.estimatedLapSeconds == null ? null : Math.max(1, Math.round(Number(body.estimatedLapSeconds)));
+  }
   await prisma.runner.update({ where: { id: body.id }, data });
   return NextResponse.json({ ok: true });
 }

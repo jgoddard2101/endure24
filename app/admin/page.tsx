@@ -8,6 +8,21 @@ interface RosterRunner {
   rotationPosition: number;
   authorized: boolean;
   active: boolean;
+  estimatedLapSeconds: number | null;
+}
+
+// "42" or "42:30" -> seconds; "" -> null. Returns undefined if unparseable.
+function parseLapTime(input: string): number | null | undefined {
+  const s = input.trim();
+  if (s === "") return null;
+  const m = s.match(/^(\d+)(?::(\d{1,2}))?$/);
+  if (!m) return undefined;
+  return parseInt(m[1], 10) * 60 + (m[2] ? parseInt(m[2], 10) : 0);
+}
+
+function fmtLapTime(sec: number | null): string {
+  if (sec == null) return "";
+  return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
 }
 
 export default function Admin() {
@@ -84,6 +99,12 @@ export default function Admin() {
     }
   };
 
+  const saveEstimate = async (id: string, text: string) => {
+    const parsed = parseLapTime(text);
+    if (parsed === undefined) return setMsg("❌ estimate must be mm or mm:ss");
+    if (await call("/api/runners", "PATCH", { id, estimatedLapSeconds: parsed })) loadRunners();
+  };
+
   return (
     <main className="mx-auto max-w-2xl px-4 py-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -133,6 +154,15 @@ export default function Admin() {
                   </a>
                 )}
               </span>
+              <input
+                key={`est-${r.id}-${r.estimatedLapSeconds ?? ""}`}
+                defaultValue={fmtLapTime(r.estimatedLapSeconds)}
+                onBlur={(e) => saveEstimate(r.id, e.target.value)}
+                placeholder="est mm:ss"
+                title="Estimated lap time (mm or mm:ss) — used until they've run real laps"
+                className="input w-24 text-center"
+                inputMode="numeric"
+              />
               <button onClick={() => move(idx, -1)} className="btn-icon">↑</button>
               <button onClick={() => move(idx, 1)} className="btn-icon">↓</button>
               <button
@@ -146,6 +176,10 @@ export default function Admin() {
             </div>
           ))}
         </div>
+        <p className="text-xs text-slate-500">
+          The <span className="text-slate-300">est mm:ss</span> box sets a starting lap-time estimate (e.g. <code>42:30</code>)
+          used for projections before anyone has run. Once a runner completes laps, their real average takes over automatically.
+        </p>
         <div className="flex gap-2">
           <input
             value={newName}

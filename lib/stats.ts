@@ -1,6 +1,5 @@
 import { prisma } from "./prisma";
 import { getEventConfig, METERS_PER_MILE, DEFAULT_PACE_SEC_PER_MILE } from "./config";
-import type { Lap, Runner } from "@prisma/client";
 
 export interface RunnerStat {
   id: string;
@@ -12,29 +11,36 @@ export interface RunnerStat {
   avgLapSeconds: number | null; // elapsed time per lap
   fastestLapSeconds: number | null;
   avgPaceSecPerMile: number | null; // from moving time
+  estimatedLapSeconds: number | null; // manual pre-event estimate, if set
   expectedLapSeconds: number; // used for ETA projection
+  expectedBasis: "actual" | "estimate" | "team" | "default"; // where expected comes from
   onCourse: boolean;
   // ISO time this runner is next expected to start a lap (null if on course now).
   nextStartAt: string | null;
   // For the on-course runner: ISO time they're expected to finish.
   estimatedFinishAt: string | null;
+  // If only this runner sped up, seconds/lap faster needed to fit one more team lap.
+  secondsFasterForExtraLap: number | null;
 }
 
 export interface DashboardState {
   eventName: string;
   teamName: string;
   startAt: string;
-  endAt: string;
+  endAt: string; // last moment a new lap may START (event start + duration)
+  finishBy: string; // a lap in progress at the cutoff must finish by here (+1h)
   now: string;
   started: boolean;
   finished: boolean;
   secondsElapsed: number;
-  secondsRemaining: number;
+  secondsRemaining: number; // until the start cutoff (endAt)
   lapDistanceMiles: number;
 
   totalLaps: number;
   totalMiles: number;
   projectedTotalLaps: number;
+  // Total team time (seconds) that must be saved to fit one more lap; null if N/A.
+  extraLapGainSeconds: number | null;
   teamAvgLapSeconds: number | null;
   fastestLap: { runnerName: string; seconds: number } | null;
 
@@ -81,9 +87,15 @@ export async function getDashboardState(): Promise<DashboardState> {
   // Team average lap duration (elapsed) across all completed laps.
   const teamAvgLapSeconds = avg(allLaps.map((l) => l.elapsedTimeSec));
 
-  const expectedFor = (laps: Lap[]): number => {
-    const own = avg(laps.map((l) => l.elapsedTimeSec));
-    return own ?? teamAvgLapSeconds ?? defaultLapSeconds;
+  // Expected lap duration for a runner, and where that number comes from:
+  //   actual average  ->  manual estimate  ->  team average  ->  default pace.
+  type Basis = "actual" | "estimate" | "team" | "default";
+  const expectedInfo = (r: (typeof runners)[number]): { sec: number; basis: Basis } => {
+    const own = avg(r.laps.map((l) => l.elapsedTimeSec));
+    if (own != null) return { sec: own, basis: "actual" };
+    if (r.estimatedLapSeconds != null) return { sec: r.estimatedLapSeconds, basis: "estimate" };
+    if (teamAvgLapSeconds != null) return { sec: teamAvgLapSeconds, basis: "team" };
+    return { sec: defaultLapSeconds, basis: "default" };
   };
 
   // --- Determine who is on course ---
@@ -105,28 +117,47 @@ export async function getDashboardState(): Promise<DashboardState> {
     }
   }
 
-  // --- Project the rotation forward to compute each runner's next start ---
+  // --- Project the rotation forward ---
+  // A lap may START any time up to the cutoff (event start + duration). A lap in
+  // progress at the cutoff still counts as long as it finishes within the next
+  // hour. So total laps == number of laps that START before the cutoff.
   const n = runners.length;
   const currentIdx = runners.findIndex((r) => r.id === currentRunnerId);
-  const nextStartAt = new Map<string, Date>();
-  let estimatedFinishAt: Date | null = null;
+  const cutoff = endAt.getTime();
+  const simStart = onCourseSince ?? (n > 0 && !finished ? startAt : null);
 
-  if (n > 0 && currentIdx !== -1 && onCourseSince) {
-    let t = new Date(onCourseSince);
-    // Simulate two full cycles so every runner (incl. the current one) gets a future start.
-    for (let k = 0; k <= 2 * n; k++) {
+  const nextStartAt = new Map<string, Date>();
+  const futureLapsByRunner = new Map<string, number>();
+  let estimatedFinishAt: Date | null = null;
+  let futureFitLaps = 0; // future laps (incl. the in-progress one) that start before cutoff
+  let marginalLapStartMs: number | null = null; // start time of the first lap that does NOT fit
+
+  if (n > 0 && currentIdx !== -1 && simStart) {
+    let t = simStart.getTime();
+    for (let k = 0; k < 1000; k++) {
       const runner = runners[(currentIdx + k) % n];
-      const lapStart = new Date(t);
-      const dur = expectedFor(runner.laps) * 1000;
-      const lapEnd = new Date(t.getTime() + dur);
-      if (k === 0) estimatedFinishAt = lapEnd;
-      // Record the first future start for each runner.
-      if (lapStart.getTime() > now.getTime() && !nextStartAt.has(runner.id)) {
-        nextStartAt.set(runner.id, lapStart);
+      const dur = expectedInfo(runner).sec * 1000;
+      if (k === 0) estimatedFinishAt = new Date(t + dur);
+      if (t < cutoff) {
+        if (t > now.getTime() && !nextStartAt.has(runner.id)) nextStartAt.set(runner.id, new Date(t));
+        futureFitLaps++;
+        futureLapsByRunner.set(runner.id, (futureLapsByRunner.get(runner.id) ?? 0) + 1);
+        t += dur;
+      } else {
+        marginalLapStartMs = t;
+        break;
       }
-      t = lapEnd;
     }
   }
+
+  const totalLaps = allLaps.length;
+  const totalMiles = round1(allLaps.reduce((a, l) => a + l.distanceMeters, 0) / METERS_PER_MILE);
+  const projectedTotalLaps = totalLaps + futureFitLaps;
+
+  // Total team time that must be saved to fit the marginal lap (the next lap that
+  // currently starts just after the cutoff).
+  const extraLapGainSeconds =
+    marginalLapStartMs != null ? Math.max(0, Math.round((marginalLapStartMs - cutoff) / 1000)) : null;
 
   const runnerStats: RunnerStat[] = runners.map((r) => {
     const laps = r.laps;
@@ -135,31 +166,37 @@ export async function getDashboardState(): Promise<DashboardState> {
     const fastest = lapCount ? Math.min(...laps.map((l) => l.elapsedTimeSec)) : null;
     const avgMoving = avg(laps.map((l) => l.movingTimeSec));
     const onCourse = r.id === currentRunnerId;
+    const { sec: expectedSec, basis } = expectedInfo(r);
+
+    // If ONLY this runner sped up, how much faster per lap would they need to be
+    // to claw back the gap, spread across the laps they're projected to run?
+    const futureLaps = futureLapsByRunner.get(r.id) ?? 0;
+    let secondsFasterForExtraLap: number | null = null;
+    if (extraLapGainSeconds != null && extraLapGainSeconds > 0 && futureLaps > 0) {
+      const perLap = extraLapGainSeconds / futureLaps;
+      // Only meaningful if they could realistically still complete the lap.
+      secondsFasterForExtraLap = perLap < expectedSec ? Math.round(perLap) : null;
+    }
+
     return {
       id: r.id,
       name: r.name,
       rotationPosition: r.rotationPosition,
       authorized: Boolean(r.refreshToken),
       lapCount,
-      totalMiles: round1((laps.reduce((a, l) => a + l.distanceMeters, 0)) / METERS_PER_MILE),
+      totalMiles: round1(laps.reduce((a, l) => a + l.distanceMeters, 0) / METERS_PER_MILE),
       avgLapSeconds: avgLap ? Math.round(avgLap) : null,
       fastestLapSeconds: fastest,
       avgPaceSecPerMile: avgMoving ? Math.round(avgMoving / lapDist) : null,
-      expectedLapSeconds: Math.round(expectedFor(laps)),
+      estimatedLapSeconds: r.estimatedLapSeconds ?? null,
+      expectedLapSeconds: Math.round(expectedSec),
+      expectedBasis: basis,
       onCourse,
       nextStartAt: onCourse ? null : nextStartAt.get(r.id)?.toISOString() ?? null,
       estimatedFinishAt: onCourse ? estimatedFinishAt?.toISOString() ?? null : null,
+      secondsFasterForExtraLap,
     };
   });
-
-  const totalLaps = allLaps.length;
-  const totalMiles = round1(allLaps.reduce((a, l) => a + l.distanceMeters, 0) / METERS_PER_MILE);
-
-  // Projected total laps at event end, using team avg lap duration.
-  const lapSecForProjection = teamAvgLapSeconds ?? defaultLapSeconds;
-  const secondsRemaining = Math.max(0, Math.round((endAt.getTime() - now.getTime()) / 1000));
-  const projectedAdditional = started && !finished ? secondsRemaining / lapSecForProjection : 0;
-  const projectedTotalLaps = Math.round(totalLaps + projectedAdditional);
 
   let fastestLap: DashboardState["fastestLap"] = null;
   for (const l of allLaps) {
@@ -186,15 +223,17 @@ export async function getDashboardState(): Promise<DashboardState> {
     teamName: config.teamName,
     startAt: startAt.toISOString(),
     endAt: endAt.toISOString(),
+    finishBy: new Date(endAt.getTime() + 3600_000).toISOString(),
     now: now.toISOString(),
     started,
     finished,
     secondsElapsed: Math.max(0, Math.round((now.getTime() - startAt.getTime()) / 1000)),
-    secondsRemaining,
+    secondsRemaining: Math.max(0, Math.round((endAt.getTime() - now.getTime()) / 1000)),
     lapDistanceMiles: lapDist,
     totalLaps,
     totalMiles,
     projectedTotalLaps,
+    extraLapGainSeconds,
     teamAvgLapSeconds: teamAvgLapSeconds ? Math.round(teamAvgLapSeconds) : null,
     fastestLap,
     currentRunnerId: currentRunnerId ?? null,

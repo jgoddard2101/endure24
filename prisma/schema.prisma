@@ -40,6 +40,9 @@ model Runner {
   tokenExpiresAt   DateTime?
   // Position in the rotation queue (lower runs sooner). Editable.
   rotationPosition Int
+  // Optional pre-event lap-time estimate (seconds). Used for projections only
+  // until the runner has completed laps, after which their actual average wins.
+  estimatedLapSeconds Int?
   active           Boolean   @default(true)
   createdAt        DateTime  @default(now())
 

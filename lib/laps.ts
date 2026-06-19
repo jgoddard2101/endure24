@@ -32,10 +32,12 @@ export async function ingestActivity(runnerId: string, activity: StravaActivity)
   }
 
   const startedAt = new Date(activity.start_date);
-  // 30 min grace either side of the official window.
-  const grace = 30 * 60_000;
+  // A lap counts only if it STARTED within the event window: no later than the
+  // cutoff (start + duration). A lap in progress at the cutoff still counts (it
+  // just has to finish within the next hour). Small grace allows for clock skew.
+  const grace = 5 * 60_000;
   if (startedAt.getTime() < config.startAt.getTime() - grace || startedAt.getTime() > endAt.getTime() + grace) {
-    return { status: "rejected", reason: "outside event window" };
+    return { status: "rejected", reason: "lap started outside event window" };
   }
 
   const existing = await prisma.lap.findUnique({ where: { stravaActivityId: BigInt(activity.id) } });
