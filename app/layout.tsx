@@ -4,6 +4,8 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Endure24 Tracker",
   description: "Live lap tracking for a 24-hour running relay",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: { capable: true, title: "Endure24", statusBarStyle: "black-translucent" },
 };
 
 export const viewport: Viewport = {

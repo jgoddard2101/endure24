@@ -1,0 +1,9 @@
+{
+  "name": "Endure24 Tracker",
+  "short_name": "Endure24",
+  "description": "Live lap tracking for a 24-hour running relay",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0e1a",
+  "theme_color": "#0a0e1a"
+}

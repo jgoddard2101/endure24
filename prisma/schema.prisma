@@ -45,8 +45,24 @@ model Runner {
   estimatedLapSeconds Int?
   active           Boolean   @default(true)
   createdAt        DateTime  @default(now())
+  // Cooldown marker: last time a "you're up soon" push was sent to this runner.
+  lastNotifiedAt   DateTime?
 
   laps             Lap[]
+  pushSubscriptions PushSubscription[]
+}
+
+// A browser/device push subscription, linked to the runner who enabled it.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  runner    Runner   @relation(fields: [runnerId], references: [id], onDelete: Cascade)
+  runnerId  String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+
+  @@index([runnerId])
 }
 
 model Lap {

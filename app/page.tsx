@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { DashboardState } from "@/lib/stats";
 import { formatDuration, formatPace, formatDistance, formatRelative, formatClock, milesToUnit, type Unit } from "@/lib/format";
+import NotifyToggle from "./components/NotifyToggle";
 
 export default function Dashboard() {
   const [state, setState] = useState<DashboardState | null>(null);
@@ -99,6 +100,8 @@ export default function Dashboard() {
           </>
         )}
       </div>
+
+      <NotifyToggle />
 
       {/* On course now */}
       <section className="mt-4 rounded-2xl bg-gradient-to-br from-orange-600/30 to-rose-600/20 ring-1 ring-orange-500/30 p-5">
