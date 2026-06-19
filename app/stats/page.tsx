@@ -29,8 +29,8 @@ export default function StatsPage() {
 
       {/* Push for one more lap */}
       {state.extraLapGainSeconds != null && state.extraLapGainSeconds > 0 && (
-        <section className="mt-5 rounded-xl ring-1 ring-orange-500/30 bg-orange-600/10 p-4">
-          <h2 className="text-sm font-semibold text-orange-300 mb-1">🎯 Push for one more lap</h2>
+        <section className="mt-5 rounded-xl ring-1 ring-slate-800 bg-slate-900/30 p-4">
+          <h2 className="text-sm font-semibold text-slate-300 mb-1">🎯 Push for one more lap</h2>
           <p className="text-sm text-slate-300">
             Projected <b>{state.projectedTotalLaps}</b> laps. To squeeze in <b>one more</b>, the team needs to claw back{" "}
             <b className="text-orange-200">{formatDuration(state.extraLapGainSeconds)}</b>

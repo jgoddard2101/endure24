@@ -32,8 +32,8 @@ export default function Dashboard() {
 
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         {/* On course now */}
-        <section className="rounded-2xl bg-gradient-to-br from-orange-600/30 to-rose-600/20 ring-1 ring-orange-500/30 p-5">
-          <p className="text-xs uppercase tracking-widest text-orange-300/80">On course now</p>
+        <section className="rounded-2xl bg-gradient-to-br from-amber-500/40 via-orange-600/35 to-rose-600/30 ring-1 ring-orange-400/40 shadow-lg shadow-orange-950/40 p-5">
+          <p className="text-xs uppercase tracking-widest text-orange-200">On course now</p>
           {current ? (
             <>
               <p className="mt-1 text-3xl font-extrabold leading-tight">{current.name}</p>
@@ -63,8 +63,8 @@ export default function Dashboard() {
         </section>
 
         {/* Up next */}
-        <section className="rounded-2xl bg-gradient-to-br from-sky-600/30 to-indigo-600/20 ring-1 ring-sky-500/30 p-5">
-          <p className="text-xs uppercase tracking-widest text-sky-300/80">Up next</p>
+        <section className="rounded-2xl bg-gradient-to-br from-sky-500/40 via-indigo-500/35 to-fuchsia-600/30 ring-1 ring-sky-400/40 shadow-lg shadow-indigo-950/40 p-5">
+          <p className="text-xs uppercase tracking-widest text-sky-200">Up next</p>
           {upNext ? (
             <>
               <p className="mt-1 text-3xl font-extrabold leading-tight">{upNext.name}</p>
