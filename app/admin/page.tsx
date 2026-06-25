@@ -42,6 +42,9 @@ interface EventCfg {
 
 export default function Admin() {
   const [password, setPassword] = useState("");
+  const [editMode, setEditMode] = useState(false);
+  const [showUnlock, setShowUnlock] = useState(false);
+  const [unlockInput, setUnlockInput] = useState("");
   const [runners, setRunners] = useState<RosterRunner[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
@@ -85,6 +88,35 @@ export default function Admin() {
     localStorage.setItem("endure24_pw", pw);
   };
 
+  // Validate a password against the server (no side effects).
+  const checkPw = async (pw: string) => {
+    if (!pw) return false;
+    const res = await fetch("/api/admin/check", { headers: { "x-admin-password": pw }, cache: "no-store" });
+    return res.ok;
+  };
+
+  // Enable edit mode: reuse a remembered password silently, else prompt to unlock.
+  const enableEdit = async () => {
+    setMsg(null);
+    if (password && (await checkPw(password))) {
+      setEditMode(true);
+      return;
+    }
+    setUnlockInput(password);
+    setShowUnlock(true);
+  };
+
+  const submitUnlock = async () => {
+    if (await checkPw(unlockInput)) {
+      savePw(unlockInput);
+      setEditMode(true);
+      setShowUnlock(false);
+      setMsg("✅ Edit mode unlocked");
+    } else {
+      setMsg("❌ Wrong password");
+    }
+  };
+
   // Generic admin POST/PATCH/DELETE helper.
   const call = async (url: string, method: string, body: Record<string, unknown> = {}) => {
     setMsg(null);
@@ -95,6 +127,11 @@ export default function Admin() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+      // A stale/cleared password means we're no longer authorized — re-lock.
+      if (res.status === 401) {
+        setEditMode(false);
+        setShowUnlock(true);
+      }
       setMsg(`❌ ${data.error ?? res.status}`);
       return false;
     }
@@ -163,24 +200,46 @@ export default function Admin() {
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-6 space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <h1 className="text-xl font-bold">Admin / Race Control</h1>
-        <a href="/" className="text-sm underline text-slate-400">← dashboard</a>
+        <div className="flex items-center gap-3">
+          {editMode ? (
+            <button onClick={() => { setEditMode(false); setMsg(null); }} className="btn-ghost text-xs">
+              🔓 Editing — tap to lock
+            </button>
+          ) : (
+            <button onClick={enableEdit} className="btn text-xs">✎ Enable edit mode</button>
+          )}
+          <a href="/" className="text-sm underline text-slate-400">← dashboard</a>
+        </div>
       </div>
 
-      <Section title="Admin password">
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => savePw(e.target.value)}
-          placeholder="ADMIN_PASSWORD"
-          className="input"
-        />
-        <p className="text-xs text-slate-500">Stored locally in this browser. Required for every action below.</p>
-      </Section>
+      {showUnlock && !editMode && (
+        <Section title="Unlock editing">
+          <div className="flex gap-2">
+            <input
+              type="password"
+              value={unlockInput}
+              onChange={(e) => setUnlockInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") submitUnlock(); }}
+              placeholder="Admin password"
+              className="input flex-1"
+              autoFocus
+            />
+            <button onClick={submitUnlock} className="btn">Unlock</button>
+            <button onClick={() => setShowUnlock(false)} className="btn-ghost">Cancel</button>
+          </div>
+          <p className="text-xs text-slate-500">Entered once and remembered in this browser; the page stays read-only until unlocked.</p>
+        </Section>
+      )}
+
+      {!editMode && !showUnlock && (
+        <p className="text-xs text-slate-500">Read-only view. Tap <b className="text-slate-300">✎ Enable edit mode</b> to make changes.</p>
+      )}
 
       {msg && <p className="text-sm">{msg}</p>}
 
+      <fieldset disabled={!editMode} className="space-y-6 border-0 p-0 m-0 min-w-0 disabled:opacity-50">
       <Section title="Event settings">
         {ev ? (
           <>
@@ -345,6 +404,7 @@ export default function Admin() {
         </p>
         <button onClick={resetData} className="btn-danger">Clear all laps</button>
       </Section>
+      </fieldset>
 
       <style>{`
         .input { background:#1e293b; border:1px solid #334155; border-radius:8px; padding:8px 10px; color:#e8edf5; font-size:14px; }
