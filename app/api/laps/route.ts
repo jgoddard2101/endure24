@@ -10,8 +10,8 @@ export const dynamic = "force-dynamic";
  * Strava upload fails. Body: { runnerId, minutes, seconds?, miles?, startedAt? }
  */
 export async function POST(req: NextRequest) {
+  // Open endpoint: manual laps are part of passwordless race-day control.
   const body = await req.json().catch(() => ({}));
-  if (!isAdmin(req, body.password)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (!body.runnerId) return NextResponse.json({ error: "runnerId required" }, { status: 400 });
 
   const config = await getEventConfig();
@@ -22,7 +22,13 @@ export async function POST(req: NextRequest) {
   const laps = Math.max(1, Math.round(Number(body.laps ?? 1)));
   // Distance defaults to laps × the configured lap distance.
   const miles = body.miles != null ? Number(body.miles) : config.lapDistanceMiles * laps;
-  const startedAt = body.startedAt ? new Date(body.startedAt) : new Date(Date.now() - seconds * 1000);
+  // Timestamp priority: explicit start time → derive from a given finish time →
+  // assume the runner is finishing about now (now − lap duration).
+  const startedAt = body.startedAt
+    ? new Date(body.startedAt)
+    : body.finishedAt
+      ? new Date(new Date(body.finishedAt).getTime() - seconds * 1000)
+      : new Date(Date.now() - seconds * 1000);
 
   const lap = await prisma.lap.create({
     data: {

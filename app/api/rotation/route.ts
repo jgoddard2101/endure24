@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { isAdmin } from "@/lib/auth";
 import { getEventConfig } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Update the rotation and/or who is on course (admin).
+ * Update the rotation and/or who is on course. Open endpoint: reordering and the
+ * on-course override are part of passwordless race-day control.
  * Body:
  *   { order: string[] }                  -> new rotation order (runner ids)
  *   { currentRunnerId: string|null,      -> set/clear the on-course override
@@ -14,7 +14,6 @@ export const dynamic = "force-dynamic";
  */
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
-  if (!isAdmin(req, body.password)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   await getEventConfig(); // ensure the singleton exists
 
