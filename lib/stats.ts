@@ -390,7 +390,7 @@ const LONDON_PARTS = new Intl.DateTimeFormat("en-GB", {
   minute: "2-digit",
 });
 
-function londonHourMinute(d: Date): { h: number; m: number } {
+export function londonHourMinute(d: Date): { h: number; m: number } {
   const parts = LONDON_PARTS.formatToParts(d);
   const get = (t: string) => Number(parts.find((p) => p.type === t)!.value);
   let h = get("hour");
@@ -398,9 +398,50 @@ function londonHourMinute(d: Date): { h: number; m: number } {
   return { h, m: get("minute") };
 }
 
-function isLondonNight(d: Date): boolean {
+export function isLondonNight(d: Date): boolean {
   const h = londonHourMinute(d).h;
   return h >= 22 || h < 6;
+}
+
+export interface ConsistencyStats {
+  n: number;
+  mean: number | null; // avg of the supplied lap times
+  min: number | null;
+  max: number | null;
+  stddev: number | null; // null unless n >= 3 (matches the Metronome threshold)
+  cv: number | null; // stddev / mean * 100 (1 dp)
+  adj1: number | null; // consistency-adjusted: mean + 1σ
+  adj2: number | null; // mean + 2σ
+}
+
+/**
+ * Consistency bundle over a set of single-lap elapsed times (seconds). stddev
+ * and the derived cv / mean±σ need at least 3 laps to be meaningful; below that
+ * they're null while mean/min/max are still returned.
+ */
+export function consistencyStats(secs: number[]): ConsistencyStats {
+  const n = secs.length;
+  if (n === 0) return { n: 0, mean: null, min: null, max: null, stddev: null, cv: null, adj1: null, adj2: null };
+  const mean = secs.reduce((a, b) => a + b, 0) / n;
+  const base: ConsistencyStats = {
+    n,
+    mean: Math.round(mean),
+    min: Math.min(...secs),
+    max: Math.max(...secs),
+    stddev: null,
+    cv: null,
+    adj1: null,
+    adj2: null,
+  };
+  if (n >= 3) {
+    const variance = secs.reduce((a, x) => a + (x - mean) ** 2, 0) / n;
+    const sd = Math.sqrt(variance);
+    base.stddev = Math.round(sd);
+    base.cv = Math.round((sd / mean) * 1000) / 10;
+    base.adj1 = Math.round(mean + sd);
+    base.adj2 = Math.round(mean + 2 * sd);
+  }
+  return base;
 }
 
 export interface RunnerRecap {
@@ -429,6 +470,7 @@ export interface Award {
   runnerName: string;
   value: number; // raw value; client formats per valueKind (unit-aware for miles)
   valueKind: "laps" | "duration" | "count" | "stdev" | "pct" | "miles" | "clock";
+  team?: string; // set for club-wide awards; undefined for a single team
 }
 
 export interface EventSummary {
@@ -560,12 +602,7 @@ export async function getEventSummary(): Promise<EventSummary> {
     const singleLapTimes = laps.filter((l) => l.laps === 1).map((l) => l.elapsedTimeSec);
 
     // Consistency: population stdev of single-lap elapsed times (require >= 3).
-    let consistencyStddevSec: number | null = null;
-    if (singleLapTimes.length >= 3) {
-      const mean = singleLapTimes.reduce((a, x) => a + x, 0) / singleLapTimes.length;
-      const variance = singleLapTimes.reduce((a, x) => a + (x - mean) ** 2, 0) / singleLapTimes.length;
-      consistencyStddevSec = Math.round(Math.sqrt(variance));
-    }
+    const consistencyStddevSec = consistencyStats(singleLapTimes).stddev;
 
     // Improvement: first-half vs second-half avg elapsed per single lap (require >= 4 records).
     let improvementPct: number | null = null;
