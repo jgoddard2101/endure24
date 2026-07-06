@@ -2,12 +2,13 @@
 
 import type { Unit } from "@/lib/format";
 
-type Page = "dashboard" | "laps" | "stats";
+type Page = "dashboard" | "laps" | "stats" | "recap";
 
 const LINKS: { page: Page; href: string; label: string }[] = [
   { page: "dashboard", href: "/", label: "Live" },
   { page: "laps", href: "/laps", label: "Laps" },
   { page: "stats", href: "/stats", label: "Stats" },
+  { page: "recap", href: "/recap", label: "Recap" },
 ];
 
 export default function Nav({

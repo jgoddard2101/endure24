@@ -376,3 +376,320 @@ export async function getDashboardState(): Promise<DashboardState> {
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }
+
+// ---------------------------------------------------------------------------
+// End-of-event recap (per-team summary + awards + leaderboard)
+// ---------------------------------------------------------------------------
+
+// Laps are stored in UTC; the event runs on UK time (BST in July), so night
+// detection must use the IANA zone, not a fixed offset. Build the formatter once.
+const LONDON_PARTS = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London",
+  hour12: false,
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+function londonHourMinute(d: Date): { h: number; m: number } {
+  const parts = LONDON_PARTS.formatToParts(d);
+  const get = (t: string) => Number(parts.find((p) => p.type === t)!.value);
+  let h = get("hour");
+  if (h === 24) h = 0; // en-GB can emit "24" at midnight
+  return { h, m: get("minute") };
+}
+
+function isLondonNight(d: Date): boolean {
+  const h = londonHourMinute(d).h;
+  return h >= 22 || h < 6;
+}
+
+export interface RunnerRecap {
+  id: string;
+  name: string;
+  active: boolean; // false = dropped out but still counted
+  lapCount: number; // weighted by Lap.laps
+  totalMiles: number;
+  avgLapSeconds: number | null;
+  fastestLapSeconds: number | null; // single laps only (laps === 1)
+  avgPaceSecPerMile: number | null;
+  nightLaps: number; // weighted, London-local [22:00, 06:00)
+  biggestEffortLaps: number; // max Lap.laps in one record
+  longestStreak: number; // consecutive lap records by this runner
+  consistencyStddevSec: number | null; // stdev of single-lap elapsed; null if < 3
+  improvementPct: number | null; // + = faster 2nd half; null if < 4 laps
+  awards: string[]; // award keys this runner won
+}
+
+export interface Award {
+  key: string;
+  emoji: string;
+  title: string;
+  blurb: string;
+  runnerId: string;
+  runnerName: string;
+  value: number; // raw value; client formats per valueKind (unit-aware for miles)
+  valueKind: "laps" | "duration" | "count" | "stdev" | "pct" | "miles" | "clock";
+}
+
+export interface EventSummary {
+  eventName: string;
+  teamName: string;
+  startAt: string;
+  endAt: string;
+  finished: boolean;
+  totalLaps: number;
+  totalMiles: number;
+  teamAvgLapSeconds: number | null;
+  teamAvgPaceSecPerMile: number | null;
+  fastestLap: { runnerName: string; seconds: number } | null;
+  nightLaps: number;
+  manualLaps: number;
+  stravaLaps: number;
+  movingSeconds: number;
+  elapsedSeconds: number;
+  effortPct: number | null; // moving / elapsed * 100
+  biggestEffort: { runnerName: string; laps: number; miles: number } | null;
+  firstLapAt: string | null;
+  lastLapEndAt: string | null;
+  coverageSeconds: number | null;
+  initialProjectedLaps: number;
+  planDelta: number; // totalLaps - initialProjectedLaps
+  runners: RunnerRecap[];
+  awards: Award[];
+}
+
+/** Post-event recap: team totals, playful awards and a leaderboard. */
+export async function getEventSummary(): Promise<EventSummary> {
+  const config = await getEventConfig();
+  const startAt = config.startAt;
+  const endAt = new Date(startAt.getTime() + config.durationHours * 3600_000);
+  const now = new Date();
+  const lapDist = config.lapDistanceMiles;
+  const defaultLapSeconds = lapDist * DEFAULT_PACE_SEC_PER_MILE;
+
+  // ALL runners (including dropped-out — they still ran laps that count).
+  const runners = await prisma.runner.findMany({
+    orderBy: { rotationPosition: "asc" },
+    include: { laps: { orderBy: { startedAt: "asc" } } },
+  });
+  const allLaps = await prisma.lap.findMany({
+    orderBy: { startedAt: "asc" },
+    include: { runner: true },
+  });
+
+  // --- Team totals ---
+  const totalLaps = allLaps.reduce((a, l) => a + l.laps, 0);
+  const totalMeters = allLaps.reduce((a, l) => a + l.distanceMeters, 0);
+  const teamMiles = totalMeters / METERS_PER_MILE;
+  const movingSeconds = allLaps.reduce((a, l) => a + l.movingTimeSec, 0);
+  const elapsedSeconds = allLaps.reduce((a, l) => a + l.elapsedTimeSec, 0);
+  const teamAvgLapSeconds = totalLaps > 0 ? Math.round(elapsedSeconds / totalLaps) : null;
+  const teamAvgPaceSecPerMile = teamMiles > 0 ? Math.round(movingSeconds / teamMiles) : null;
+  const effortPct = elapsedSeconds > 0 ? Math.min(100, Math.round((movingSeconds / elapsedSeconds) * 100)) : null;
+  const nightLaps = allLaps.reduce((a, l) => a + (isLondonNight(l.startedAt) ? l.laps : 0), 0);
+  const manualLaps = allLaps.reduce((a, l) => a + (l.source === "manual" ? l.laps : 0), 0);
+  const stravaLaps = totalLaps - manualLaps;
+
+  // Fastest single lap (team-wide).
+  let fastestLap: { runnerName: string; seconds: number } | null = null;
+  for (const l of allLaps) {
+    if (l.laps !== 1) continue;
+    if (!fastestLap || l.elapsedTimeSec < fastestLap.seconds) {
+      fastestLap = { runnerName: l.runner.name, seconds: l.elapsedTimeSec };
+    }
+  }
+
+  // Biggest single effort (max-distance record).
+  let biggestLap: (typeof allLaps)[number] | null = null;
+  for (const l of allLaps) {
+    if (!biggestLap || l.distanceMeters > biggestLap.distanceMeters) biggestLap = l;
+  }
+  const biggestEffort = biggestLap
+    ? { runnerName: biggestLap.runner.name, laps: biggestLap.laps, miles: round1(biggestLap.distanceMeters / METERS_PER_MILE) }
+    : null;
+
+  // Coverage window (earliest start → latest finish).
+  const firstLap = allLaps[0] ?? null;
+  let lastFinishMs: number | null = null;
+  for (const l of allLaps) {
+    const end = l.startedAt.getTime() + l.elapsedTimeSec * 1000;
+    if (lastFinishMs == null || end > lastFinishMs) lastFinishMs = end;
+  }
+  const firstLapAt = firstLap ? firstLap.startedAt.toISOString() : null;
+  const lastLapEndAt = lastFinishMs != null ? new Date(lastFinishMs).toISOString() : null;
+  const coverageSeconds =
+    firstLap && lastFinishMs != null ? Math.round((lastFinishMs - firstLap.startedAt.getTime()) / 1000) : null;
+
+  // Initial plan: rotation of estimates/default across the full roster.
+  let initialProjectedLaps = 0;
+  const n = runners.length;
+  const cutoff = endAt.getTime();
+  if (n > 0) {
+    let t = startAt.getTime();
+    for (let k = 0; k < 1000 && t < cutoff; k++) {
+      const r = runners[k % n];
+      initialProjectedLaps++;
+      t += (r.estimatedLapSeconds ?? defaultLapSeconds) * 1000;
+    }
+  }
+
+  // Longest back-to-back streak per runner (consecutive records in time order).
+  const streakByRunner = new Map<string, number>();
+  {
+    let curId: string | null = null;
+    let curLen = 0;
+    for (const l of allLaps) {
+      if (l.runnerId === curId) curLen++;
+      else {
+        curId = l.runnerId;
+        curLen = 1;
+      }
+      streakByRunner.set(curId, Math.max(streakByRunner.get(curId) ?? 0, curLen));
+    }
+  }
+
+  // --- Per-runner recap (only runners who actually ran) ---
+  const runnerRecaps: RunnerRecap[] = [];
+  for (const r of runners) {
+    const laps = r.laps;
+    if (laps.length === 0) continue;
+    const lapCount = laps.reduce((a, l) => a + l.laps, 0);
+    const totalElapsed = laps.reduce((a, l) => a + l.elapsedTimeSec, 0);
+    const totalMoving = laps.reduce((a, l) => a + l.movingTimeSec, 0);
+    const milesRun = laps.reduce((a, l) => a + l.distanceMeters, 0) / METERS_PER_MILE;
+    const singleLapTimes = laps.filter((l) => l.laps === 1).map((l) => l.elapsedTimeSec);
+
+    // Consistency: population stdev of single-lap elapsed times (require >= 3).
+    let consistencyStddevSec: number | null = null;
+    if (singleLapTimes.length >= 3) {
+      const mean = singleLapTimes.reduce((a, x) => a + x, 0) / singleLapTimes.length;
+      const variance = singleLapTimes.reduce((a, x) => a + (x - mean) ** 2, 0) / singleLapTimes.length;
+      consistencyStddevSec = Math.round(Math.sqrt(variance));
+    }
+
+    // Improvement: first-half vs second-half avg elapsed per single lap (require >= 4 records).
+    let improvementPct: number | null = null;
+    if (laps.length >= 4) {
+      const half = Math.floor(laps.length / 2);
+      const avg = (arr: typeof laps) => arr.reduce((a, l) => a + l.elapsedTimeSec / l.laps, 0) / arr.length;
+      const firstAvg = avg(laps.slice(0, half));
+      const secondAvg = avg(laps.slice(laps.length - half));
+      if (firstAvg > 0) improvementPct = Math.round(((firstAvg - secondAvg) / firstAvg) * 1000) / 10;
+    }
+
+    runnerRecaps.push({
+      id: r.id,
+      name: r.name,
+      active: r.active,
+      lapCount,
+      totalMiles: round1(milesRun),
+      avgLapSeconds: lapCount > 0 ? Math.round(totalElapsed / lapCount) : null,
+      fastestLapSeconds: singleLapTimes.length ? Math.min(...singleLapTimes) : null,
+      avgPaceSecPerMile: milesRun > 0 ? Math.round(totalMoving / milesRun) : null,
+      nightLaps: laps.reduce((a, l) => a + (isLondonNight(l.startedAt) ? l.laps : 0), 0),
+      biggestEffortLaps: laps.reduce((a, l) => Math.max(a, l.laps), 0),
+      longestStreak: streakByRunner.get(r.id) ?? 0,
+      consistencyStddevSec,
+      improvementPct,
+      awards: [],
+    });
+  }
+  runnerRecaps.sort(
+    (a, b) => b.lapCount - a.lapCount || b.totalMiles - a.totalMiles || a.name.localeCompare(b.name)
+  );
+
+  // --- Awards ---
+  const awards: Award[] = [];
+  const recapById = new Map(runnerRecaps.map((r) => [r.id, r]));
+  const firstLapMsById = new Map<string, number>();
+  for (const r of runners) if (r.laps[0]) firstLapMsById.set(r.id, r.laps[0].startedAt.getTime());
+
+  const pick = (
+    filter: (r: RunnerRecap) => boolean,
+    cmp: (a: RunnerRecap, b: RunnerRecap) => number
+  ): RunnerRecap | null => {
+    const pool = runnerRecaps.filter(filter);
+    return pool.length ? pool.slice().sort(cmp)[0] : null;
+  };
+  const award = (
+    w: RunnerRecap | null,
+    key: string, emoji: string, title: string, blurb: string,
+    value: number, valueKind: Award["valueKind"]
+  ) => {
+    if (!w) return;
+    awards.push({ key, emoji, title, blurb, runnerId: w.id, runnerName: w.name, value, valueKind });
+    w.awards.push(key);
+  };
+
+  const mostLaps = pick(
+    (r) => r.lapCount > 0,
+    (a, b) => b.lapCount - a.lapCount || b.totalMiles - a.totalMiles || firstLapMsById.get(a.id)! - firstLapMsById.get(b.id)!
+  );
+  award(mostLaps, "most_laps", "🏆", "Iron Legs", "Most laps run", mostLaps?.lapCount ?? 0, "laps");
+
+  const speed = pick((r) => r.fastestLapSeconds != null, (a, b) => a.fastestLapSeconds! - b.fastestLapSeconds!);
+  award(speed, "fastest_lap", "⚡", "Speed Demon", "Fastest single lap", speed?.fastestLapSeconds ?? 0, "duration");
+
+  const owl = pick((r) => r.nightLaps > 0, (a, b) => b.nightLaps - a.nightLaps || b.lapCount - a.lapCount);
+  award(owl, "night_owl", "🌙", "Night Owl", "Most laps 10pm–6am", owl?.nightLaps ?? 0, "count");
+
+  const metro = pick((r) => r.consistencyStddevSec != null, (a, b) => a.consistencyStddevSec! - b.consistencyStddevSec!);
+  award(metro, "metronome", "🎯", "Metronome", "Most consistent lap times", metro?.consistencyStddevSec ?? 0, "stdev");
+
+  const improved = pick(
+    (r) => r.improvementPct != null && r.improvementPct > 0,
+    (a, b) => b.improvementPct! - a.improvementPct!
+  );
+  award(improved, "most_improved", "📈", "Most Improved", "Faster 2nd half vs 1st", improved?.improvementPct ?? 0, "pct");
+
+  const beast = pick((r) => r.biggestEffortLaps >= 2, (a, b) => b.biggestEffortLaps - a.biggestEffortLaps || b.totalMiles - a.totalMiles);
+  award(beast, "biggest_effort", "💪", "Beast Mode", "Biggest single effort", beast?.biggestEffortLaps ?? 0, "laps");
+
+  const roll = pick((r) => r.longestStreak >= 2, (a, b) => b.longestStreak - a.longestStreak || b.lapCount - a.lapCount);
+  award(roll, "streak", "🔁", "On a Roll", "Longest back-to-back streak", roll?.longestStreak ?? 0, "count");
+
+  // 🌅 Sunrise Shift — the dawn lap: among laps that started in the [4am, 8am)
+  // London window, the earliest by local time-of-day.
+  {
+    let sunriseLap: (typeof allLaps)[number] | null = null;
+    let bestTod = Infinity;
+    for (const l of allLaps) {
+      const { h, m } = londonHourMinute(l.startedAt);
+      if (h < 4 || h >= 8) continue;
+      const tod = h * 60 + m;
+      if (tod < bestTod) {
+        bestTod = tod;
+        sunriseLap = l;
+      }
+    }
+    const w = sunriseLap ? recapById.get(sunriseLap.runnerId) : null;
+    if (sunriseLap && w) award(w, "sunrise", "🌅", "Sunrise Shift", "Ran the dawn lap", bestTod, "clock");
+  }
+
+  return {
+    eventName: config.eventName,
+    teamName: config.teamName,
+    startAt: startAt.toISOString(),
+    endAt: endAt.toISOString(),
+    finished: now >= endAt,
+    totalLaps,
+    totalMiles: round1(teamMiles),
+    teamAvgLapSeconds,
+    teamAvgPaceSecPerMile,
+    fastestLap,
+    nightLaps,
+    manualLaps,
+    stravaLaps,
+    movingSeconds,
+    elapsedSeconds,
+    effortPct,
+    biggestEffort,
+    firstLapAt,
+    lastLapEndAt,
+    coverageSeconds,
+    initialProjectedLaps,
+    planDelta: totalLaps - initialProjectedLaps,
+    runners: runnerRecaps,
+    awards,
+  };
+}
