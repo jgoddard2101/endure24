@@ -68,6 +68,47 @@ export interface ClubRecap {
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
+export interface ClubLap {
+  runner: string;
+  teamName: string;
+  lapNumber: number; // this runner's own lap sequence (1-based, chronological)
+  startISO: string;
+  finishISO: string;
+  elapsedSec: number;
+  movingSec: number;
+  distanceMeters: number;
+}
+
+/** Every individual lap across all four teams, for the full CSV export. */
+export async function getClubLaps(): Promise<ClubLap[]> {
+  const out: ClubLap[] = [];
+  for (const [team, schema] of CLUB) {
+    try {
+      const db = clientFor(schema);
+      const cfg = await db.eventConfig.findFirst();
+      const teamName = cfg?.teamName ?? team;
+      const rs = await db.runner.findMany({ include: { laps: { orderBy: { startedAt: "asc" } } } });
+      for (const r of rs) {
+        r.laps.forEach((l, i) => {
+          out.push({
+            runner: r.name,
+            teamName,
+            lapNumber: i + 1,
+            startISO: l.startedAt.toISOString(),
+            finishISO: new Date(l.startedAt.getTime() + l.elapsedTimeSec * 1000).toISOString(),
+            elapsedSec: l.elapsedTimeSec,
+            movingSec: l.movingTimeSec,
+            distanceMeters: l.distanceMeters,
+          });
+        });
+      }
+    } catch (e) {
+      console.error(`[club-laps] team ${team} (${schema}) failed`, e);
+    }
+  }
+  return out;
+}
+
 /** Cross-team recap: field-wide accolades + a combined runner leaderboard. */
 export async function getClubRecap(): Promise<ClubRecap> {
   const teams: TeamStanding[] = [];

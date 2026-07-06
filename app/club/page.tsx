@@ -9,15 +9,15 @@ import Nav from "../components/Nav";
 
 type SortKey = "name" | "team" | "lapCount" | "avgLapSeconds" | "fastestSec" | "slowestSec" | "cvPct" | "adj1Sec";
 
-const COLS: { key: SortKey; label: string; kind: "str" | "laps" | "time" | "cv" }[] = [
+const COLS: { key: SortKey; label: string; kind: "str" | "laps" | "time" | "cv"; hint?: string }[] = [
   { key: "name", label: "Runner", kind: "str" },
   { key: "team", label: "Team", kind: "str" },
   { key: "lapCount", label: "Laps", kind: "laps" },
   { key: "avgLapSeconds", label: "Avg", kind: "time" },
   { key: "fastestSec", label: "Fastest", kind: "time" },
   { key: "slowestSec", label: "Slowest", kind: "time" },
-  { key: "cvPct", label: "CV%", kind: "cv" },
-  { key: "adj1Sec", label: "Mean+1σ", kind: "time" },
+  { key: "cvPct", label: "CV%", kind: "cv", hint: "Consistency: how much lap times vary, relative to their average (lower = steadier)" },
+  { key: "adj1Sec", label: "Reliable lap", kind: "time", hint: "The lap time you can count on — pace and consistency combined (about 4 in 5 laps are this fast or better)" },
 ];
 
 function clockFromMin(v: number): string {
@@ -97,28 +97,6 @@ export default function ClubPage() {
     }
   };
 
-  const downloadCsv = () => {
-    const header = ["Runner", "Team", "Laps", "Avg lap", "Fastest", "Slowest", "CV%", "Std dev", "Mean+1σ", "Mean+2σ"];
-    const t = (sec: number | null) => (sec != null ? formatDuration(sec) : "");
-    const esc = (v: string | number) => {
-      const str = String(v);
-      return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
-    };
-    const lines = sorted.map((r) =>
-      [r.name, r.teamName, r.lapCount, t(r.avgLapSeconds), t(r.fastestSec), t(r.slowestSec), r.cvPct != null ? `${r.cvPct}%` : "", t(r.stddevSec), t(r.adj1Sec), t(r.adj2Sec)]
-        .map(esc)
-        .join(",")
-    );
-    const csv = [header.join(","), ...lines].join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "club-recap.csv";
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
   return (
     <main className="mx-auto max-w-3xl px-4 py-6">
       <Nav teamName="All Teams" eventName={s.eventName} active="club" unit={unit} onToggleUnit={toggleUnit} />
@@ -179,11 +157,11 @@ export default function ClubPage() {
           <section className="mt-6 mb-10">
             <div className="flex items-center justify-between mb-2">
               <h2 className="text-sm font-semibold text-slate-400">Combined leaderboard</h2>
-              <button onClick={downloadCsv} className="text-xs rounded-lg bg-slate-800 ring-1 ring-slate-700 px-3 py-1.5 hover:bg-slate-700">
-                ⬇ Download CSV
-              </button>
+              <a href="/api/club/csv" className="text-xs rounded-lg bg-slate-800 ring-1 ring-slate-700 px-3 py-1.5 hover:bg-slate-700">
+                ⬇ Download CSV (every lap)
+              </a>
             </div>
-            <p className="text-xs text-slate-500 mb-2">Tap a column to sort. Default: consistency-adjusted (mean+1σ).</p>
+            <p className="text-xs text-slate-500 mb-2">Tap a column to sort. Default: “Reliable lap” (pace + consistency).</p>
             <div className="overflow-x-auto rounded-xl ring-1 ring-slate-800">
               <table className="w-full text-sm">
                 <thead className="text-slate-500 text-xs">
@@ -192,6 +170,7 @@ export default function ClubPage() {
                       <th
                         key={c.key}
                         onClick={() => clickHeader(c.key)}
+                        title={c.hint}
                         className={`px-3 py-2 cursor-pointer select-none hover:text-slate-300 ${c.kind === "str" ? "" : "text-right"}`}
                       >
                         {c.label}
